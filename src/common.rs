@@ -52,6 +52,8 @@ pub struct Ctx{
     pub close_all: bool,
     pub compression_alg: u16,
     pub encryption_alg: u16,
+
+    pub testing_only_disable_decrypter_threads: bool,
 }
 
 #[derive(Clone)]
@@ -429,6 +431,8 @@ pub fn get_linux_context() -> Ctx {
         //compression_alg: COMPRESSION_ALG_GZIP,
         encryption_alg: ENCRYPTION_ALG_TESTING_ONLY_NONE,
         //encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
+
+        testing_only_disable_decrypter_threads: false,
     }
 }
 

@@ -10,13 +10,16 @@ use tar::Builder;
 use crate::common::*;
 use core::ops::Range;
 use core::sync;
+use std::any::Any;
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
+use std::env;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::thread::{spawn, JoinHandle};
 use rayon::iter::ParallelIterator;
 
@@ -82,7 +85,7 @@ fn spawn_reader_decrypt<T>(mut r: BufReader<File>, sender: Sender<T>) -> JoinHan
     })
 }
 
-fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<(u64, Vec<u8>)>, sender: Sender<T>) -> JoinHandle<()>
+fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<(Seq, Vec<u8>)>, sender: Sender<T>) -> JoinHandle<()>
     where
         T: Send + 'static,
         T: ZipCrypt,
@@ -94,12 +97,11 @@ fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<(u64, Vec<u8>)>, sender: Sende
     spawn(move || {
         let ctx = &ctx;
 
-
         // let seq = seq_atomic.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         // let seq_atomic = sync::atomic::AtomicU64::new(0);
 
         receiver
-            .into_iter()
+            .iter()
             .par_bridge()
             .for_each(|(seq, buf)| {
 
@@ -111,7 +113,8 @@ fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<(u64, Vec<u8>)>, sender: Sende
             }
         });
 
-        park_sender(sender);
+        // park_sender(sender);
+        debug!("channel closed: encrypter")
     })
 }
 
@@ -128,19 +131,34 @@ fn spawn_decrypt<T>(ctx: &Ctx, receiver: Receiver<T>, sender: Sender<T>) -> Join
     let ctx = ctx.clone();
     spawn(move || {
 
-        receiver
-            .into_iter()
-            //.par_bridge()
-            .for_each(|frame| {
+        if ctx.testing_only_disable_decrypter_threads {
+            receiver
+                .iter()
+                //.par_bridge()
+                .for_each(|frame| {
 
-            let f = frame.unzip_decrypt(&ctx);
-            match sender.send(f) {
-                Ok(()) => {},
-                Err(e) => {panic!("error: sender error during decrypt: {:?}", e);}
-            }
-        });
+                let f = frame.unzip_decrypt(&ctx);
+                match sender.send(f) {
+                    Ok(()) => {},
+                    Err(e) => {panic!("error: sender error during decrypt: {:?}", e);}
+                }
+            });
+        } else {
+            receiver
+                .iter()
+                .par_bridge()
+                .for_each(|frame| {
 
-        park_sender(sender);
+                let f = frame.unzip_decrypt(&ctx);
+                match sender.send(f) {
+                    Ok(()) => {},
+                    Err(e) => {panic!("error: sender error during decrypt: {:?}", e);}
+                }
+            });
+        }
+
+        // park_sender(sender);
+        debug!("channel closed: decrypter")
     })
 }
 
@@ -204,6 +222,7 @@ fn spawn_order_by_seq<T>(receiver: Receiver<T>, sender: Sender<T>) -> JoinHandle
         });
 
         park_sender(sender);
+        debug!("channel closed: order by seq")
     })
 }
 
@@ -252,17 +271,20 @@ mod tests {
             .storage()
             .logger();
 
-        let ctx = &t.get_ctx();
+        let mut ctx = t.get_ctx();
+        ctx.testing_only_disable_decrypter_threads = true; // Disable dual threadpools due to channel bug
+        let ctx = &ctx;
+
         let size = t.get_channel_size();
 
         let mut datas = [
-            // rand_vec(0..1),
-            // rand_vec(0..256),
-            // rand_vec(0..DEFAULT_SIZE),
-            // rand_vec(0..DEFAULT_SIZE * 2 ),
-            // rand_vec(0..DEFAULT_SIZE * 4),
-            // rand_vec(0..DEFAULT_SIZE * 4 + 8),
-            // rand_vec(0..DEFAULT_SIZE * 4 - 1),
+            rand_vec(0..1),
+            rand_vec(0..256),
+            rand_vec(0..DEFAULT_SIZE),
+            rand_vec(0..DEFAULT_SIZE * 2 ),
+            rand_vec(0..DEFAULT_SIZE * 4),
+            rand_vec(0..DEFAULT_SIZE * 4 + 8),
+            rand_vec(0..DEFAULT_SIZE * 4 - 1),
             rand_vec(0..DEFAULT_SIZE * 1000 + 256),
         ];
 
@@ -296,23 +318,28 @@ mod tests {
 
                 msgs.iter().enumerate().for_each(|(seq , bytes)| {
                     s_reader.send((usize_u64(seq), bytes.clone())).unwrap();
-                })
+                });
+
+                // park_sender(s_reader);
+                debug!("channel closed: reader")
             });
 
 
             let writer_t = spawn(move ||{
                 let mut processed = m_processed_cpy.lock().unwrap();
 
-                r_writer.iter().for_each(|data|{
-                    processed.extend(data.buf);
+                r_writer.iter().for_each(|frame|{
+                    debug!("writer seq {}", frame.get_seq());
+                    processed.extend(frame.buf);
                 });
+                debug!("channel closed: writer")
             });
 
-            reader_t.join().unwrap();
+            writer_t.join().unwrap();
+            decrypter_t.join().unwrap();
             encrypter_t.join().unwrap();
             order_by_seq.join().unwrap();
-            decrypter_t.join().unwrap();
-            writer_t.join().unwrap();
+            reader_t.join().unwrap();
 
             {
                 let processed = m_processed.lock().unwrap();
