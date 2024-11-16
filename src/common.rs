@@ -1,5 +1,4 @@
-use std::{any::Any, fs::{create_dir_all, remove_dir_all, File, OpenOptions}, io::{self, BufRead, BufReader, BufWriter, Cursor, Read, Write}, os::unix::fs::MetadataExt, path::{Path, PathBuf}, str::FromStr, time::Instant};
-use bitvec::{ptr::read, vec};
+use std::{fs::{create_dir_all, OpenOptions}, io::{self, BufReader, Cursor, Read}, ops::Range, os::unix::fs::MetadataExt, path::PathBuf, str::FromStr};
 use flate2::{bufread::{GzDecoder, GzEncoder}, Compression};
 use itertools::join;
 use jwalk::WalkDir;
@@ -10,7 +9,6 @@ use rand::{thread_rng, Rng};
 use chacha20poly1305::XNonce;
 use chacha20poly1305::aead::Aead;
 
-use std::sync::Once;
 
 pub const KB: usize = 1000;
 pub const MB: usize = 1000 * KB;
@@ -54,6 +52,8 @@ pub struct Ctx{
     pub close_all: bool,
     pub compression_alg: u16,
     pub encryption_alg: u16,
+
+    pub testing_only_disable_decrypter_threads: bool,
 }
 
 #[derive(Clone)]
@@ -107,7 +107,7 @@ pub trait Deserialize {
 }
 
 pub trait ZipCrypt {
-    fn unzip_decrypt(&self, ctx: &Ctx) -> Vec<u8>;
+    fn unzip_decrypt(&self, ctx: &Ctx) -> Self;
     fn zip_encrypt(ctx: &Ctx, buf: Vec<u8>, seq: u64) -> Self;
 }
 
@@ -270,7 +270,9 @@ impl Deserialize for FrameV1 {
 
 impl ZipCrypt for FrameV1 {
 
-    fn unzip_decrypt(&self, ctx: &Ctx) -> Vec<u8> {
+    fn unzip_decrypt(&self, ctx: &Ctx) -> Self {
+        let mut processed = vec![];
+
         let mut reader: Box<dyn Read> = match self.compression_alg {
             COMPRESSION_ALG_NULL => {
                 panic!{"compression type not set {}", self.compression_alg}
@@ -301,7 +303,7 @@ impl ZipCrypt for FrameV1 {
             let mut data = vec![];
             reader.read_to_end(&mut data).unwrap();
 
-            data
+            processed = data
         } else if self.encryption_alg == ENCRYPTION_ALG_CHACHPOLY20 {
 
             // 24 byte; unique per message
@@ -310,9 +312,19 @@ impl ZipCrypt for FrameV1 {
                 self.buf.as_ref()
             ).unwrap();
 
-            deciphertext
+            processed = deciphertext
         } else {
             panic!("encryption alg not supported {}", self.encryption_alg);
+        }
+
+        FrameV1{
+            seq: self.seq,
+            encryption_alg: self.encryption_alg,
+            compression_alg: self.compression_alg,
+            nonce: self.nonce.clone(),
+
+            buf_len: usize_u32(processed.len()),
+            buf: processed,
         }
 
     }
@@ -388,8 +400,6 @@ impl ZipCrypt for FrameV1 {
             panic!("encryption alg not supported {}", ctx.encryption_alg);
         }
     }
-
-
 }
 
 const PWD: &str = "V7Pvxzhhw9gLWV3k";
@@ -417,10 +427,12 @@ pub fn get_linux_context() -> Ctx {
 
         close_all: false,
         
-        //compression_alg: COMPRESSION_ALG_NONE,
-        compression_alg: COMPRESSION_ALG_GZIP,
-        //encryption_alg: ENCRYPTION_ALG_TESTING_ONLY_NONE,
-        encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
+        compression_alg: COMPRESSION_ALG_NONE,
+        //compression_alg: COMPRESSION_ALG_GZIP,
+        encryption_alg: ENCRYPTION_ALG_TESTING_ONLY_NONE,
+        //encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
+
+        testing_only_disable_decrypter_threads: false,
     }
 }
 
@@ -428,7 +440,6 @@ pub fn get_linux_context() -> Ctx {
 
 use chrono::DateTime;
 use chrono::Utc;
-use tar::Builder;
 
 pub fn new_tmp_dir() -> (PathBuf, String) {
     let ctx = &get_linux_context();
@@ -679,6 +690,29 @@ pub fn new_uid(length: u64) -> String {
     ).unwrap()
 }
 
+// create a random vector
+pub fn rand_vec(range: Range<usize>) -> Vec<u8> {
+    let mut v = vec![];
+    for _ in range{
+        v.push(rand::random::<u8>());
+    }
+    return v;
+}
+
+// split data into DEFAULT sized buffers for msg passing
+pub fn split_data(data: &Vec<u8>) -> Vec<Vec<u8>> {
+    let (chunks, remainder) = data.as_chunks::<DEFAULT_SIZE>();
+    let mut buf: Vec<Vec<u8>> = chunks
+        .into_iter()
+        .map(|c| {Vec::from(c)}).collect();
+
+    buf.push(Vec::from(remainder));
+
+    buf
+}
+
+
+
 pub struct Init{
     ctx: Ctx,
 }
@@ -741,7 +775,6 @@ impl TestInit {
 }
 
 fn init_logger() -> Result<(), Box<dyn std::error::Error>>{
-    /*
     // Configure logger at runtime
     fern::Dispatch::new()
         // Perform allocation-free log formatting
@@ -761,8 +794,6 @@ fn init_logger() -> Result<(), Box<dyn std::error::Error>>{
         .chain(fern::log_file("output.log")?)
         // Apply globally
         .apply()?;
-
-    */
     Ok(())
 }
 

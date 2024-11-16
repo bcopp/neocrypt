@@ -11,19 +11,18 @@ use cipher::consts::{B0, B1};
 use cipher::generic_array::GenericArray;
 use cipher::typenum::{UInt, UTerm};
 use rand_core::OsRng;
-use scrypt::{ scrypt, Params, Scrypt };
-use password_hash::{ Ident, Output, PasswordHash, PasswordHashString, PasswordVerifier };
+use scrypt::{ scrypt, Params };
+use password_hash::{ Ident, Output, PasswordHash, PasswordHashString };
 use password_hash::Salt;
-use rand::{thread_rng, SeedableRng};
+use rand::SeedableRng;
 use rand::CryptoRng;
-use rand_core::{le, Error, RngCore};
+use rand_core::{Error, RngCore};
 use cipher::StreamCipherCoreWrapper;
 use chacha20::XChaChaCore;
 
 use chacha20poly1305::{
-    aead::{Aead, AeadCore, KeyInit},
+    aead::{AeadCore, KeyInit},
     XChaCha20Poly1305,
-    XNonce,
 };
 
 const RECOMMENDED_LOG_N: u8 = 17;
@@ -104,7 +103,7 @@ impl BstRng{
             panic!("empty seed")
         }
 
-        println!("FILL BYTES: {}", dest.len());
+        // println!("FILL BYTES: {}", dest.len());
         for i in 0..dest.len(){
             dest[i] = self.0.0[i + self.1]
         }
@@ -244,7 +243,7 @@ fn xdhashbash(pwd: &str) -> u64 {
     }
 
 
-    let mut bits = bits![mut 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    let bits = bits![mut 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
          0, 0, 0, 0];

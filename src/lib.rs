@@ -1,18 +1,18 @@
+#![feature(slice_as_chunks)]
+
 extern crate sys_mount;
 
 mod hashing;
 mod common;
 mod crypter;
+mod streaming;
 
 use common::*;
-use rand::seq::SliceRandom;
 use sys_mount::FilesystemType;
-use sys_mount::{Mount, MountFlags, SupportedFilesystems};
+use sys_mount::{Mount, SupportedFilesystems};
 use core::panic;
-use std::error::Error;
-use std::fs::{create_dir, create_dir_all, read_dir, remove_dir_all, DirEntry};
-use std::os::unix::fs::FileTypeExt;
-use std::path::{Path, PathBuf};
+use std::fs::{create_dir, read_dir, remove_dir_all, DirEntry};
+use std::path::PathBuf;
 use std::process::exit;
 use std::io;
 
