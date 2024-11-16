@@ -741,6 +741,7 @@ impl TestInit {
 }
 
 fn init_logger() -> Result<(), Box<dyn std::error::Error>>{
+    /*
     // Configure logger at runtime
     fern::Dispatch::new()
         // Perform allocation-free log formatting
@@ -761,6 +762,7 @@ fn init_logger() -> Result<(), Box<dyn std::error::Error>>{
         // Apply globally
         .apply()?;
 
+    */
     Ok(())
 }
 

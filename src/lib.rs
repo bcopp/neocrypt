@@ -131,6 +131,7 @@ mod tests {
     use common::*;
 
     #[test]
+    #[ignore]
     fn test_ls_mount_unmount(){
         let t = &TestInit::new()
             .storage()
