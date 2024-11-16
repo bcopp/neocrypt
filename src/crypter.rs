@@ -22,6 +22,7 @@ use rayon::iter::ParallelIterator;
 
 
 use crate::streaming::{StreamBufWriter, StreamBufReader};
+type Seq = u64;
 
 
 fn park_sender<T>(sender: Sender<T>) { while ! sender.is_empty() {} }
@@ -81,7 +82,7 @@ fn spawn_reader_decrypt<T>(mut r: BufReader<File>, sender: Sender<T>) -> JoinHan
     })
 }
 
-fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<Vec<u8>>, sender: Sender<T>) -> JoinHandle<()>
+fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<(u64, Vec<u8>)>, sender: Sender<T>) -> JoinHandle<()>
     where
         T: Send + 'static,
         T: ZipCrypt,
@@ -94,13 +95,13 @@ fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<Vec<u8>>, sender: Sender<T>) -
         let ctx = &ctx;
 
 
-        let seq_atomic = sync::atomic::AtomicU64::new(0);
+        // let seq = seq_atomic.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // let seq_atomic = sync::atomic::AtomicU64::new(0);
+
         receiver
             .into_iter()
-            //.par_bridge()
-            .for_each(|buf| {
-
-            let seq = seq_atomic.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            .par_bridge()
+            .for_each(|(seq, buf)| {
 
             let frame = T::zip_encrypt(ctx, buf, seq);
 
@@ -114,7 +115,7 @@ fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<Vec<u8>>, sender: Sender<T>) -
     })
 }
 
-fn spawn_decrypt<T>(ctx: &Ctx, receiver: Receiver<T>, sender: Sender<Vec<u8>>) -> JoinHandle<()>
+fn spawn_decrypt<T>(ctx: &Ctx, receiver: Receiver<T>, sender: Sender<T>) -> JoinHandle<()>
     where
         T: Send + 'static,
         T: ZipCrypt,
@@ -132,10 +133,8 @@ fn spawn_decrypt<T>(ctx: &Ctx, receiver: Receiver<T>, sender: Sender<Vec<u8>>) -
             //.par_bridge()
             .for_each(|frame| {
 
-            debug!("seq {}", frame.get_seq());
-
-            let data = frame.unzip_decrypt(&ctx);
-            match sender.send(data) {
+            let f = frame.unzip_decrypt(&ctx);
+            match sender.send(f) {
                 Ok(()) => {},
                 Err(e) => {panic!("error: sender error during decrypt: {:?}", e);}
             }
@@ -269,6 +268,8 @@ mod tests {
 
         let data_msgs: Vec<Vec<Vec<u8>>> = datas.iter().map(|d| {split_data(d)}).collect();
 
+        debug!("data generation finished");
+
 
         for (msgs, data) in itertools::zip_eq(data_msgs, datas) {
             debug!("data len{}", data.len());
@@ -284,17 +285,17 @@ mod tests {
             let (s_decrypter, r_decrypter) = bounded::<FrameV1>(size);
             let (s_writer, r_writer) = bounded(size);
 
-            let encrypter_t = spawn_encrypt(ctx, r_reader, s_order_by_seq);
-            let order_by_seq = spawn_order_by_seq(r_order_by_seq, s_decrypter);
-            let decrypter_t = spawn_decrypt(ctx, r_decrypter, s_writer);
+            let encrypter_t = spawn_encrypt(ctx, r_reader, s_decrypter);
+            let decrypter_t = spawn_decrypt(ctx, r_decrypter, s_order_by_seq);
+            let order_by_seq = spawn_order_by_seq(r_order_by_seq, s_writer);
 
 
             // writes out all buffers
             let reader_t = spawn(move ||{
                 let msgs = &m_msgs_cpy.lock().unwrap();
 
-                msgs.iter().for_each(|bytes| {
-                    s_reader.send(bytes.clone()).unwrap();
+                msgs.iter().enumerate().for_each(|(seq , bytes)| {
+                    s_reader.send((usize_u64(seq), bytes.clone())).unwrap();
                 })
             });
 
@@ -303,7 +304,7 @@ mod tests {
                 let mut processed = m_processed_cpy.lock().unwrap();
 
                 r_writer.iter().for_each(|data|{
-                    processed.extend(data);
+                    processed.extend(data.buf);
                 });
             });
 
@@ -358,50 +359,3 @@ mod tests {
         }
     }
 }
-
-
-
-/*
-
-builder!{
-    start(t)
-    next(t)
-    next(t)
-    sort()
-    sort_by_key()
-    next(t)
-    finish(t)
-}.collect()
-
-new
-..add files
-
-close
-... tar files
-... encrypt files
-... order frames
-... write out u8s
-
-*/
-
-/*
-let b = SeqBuilder
-
-
-let (s_t1, r_t1) = bounded(name, size);
-let (s_t2, r_t2) = bounded(size);
-let (s_t3, r_t3) = bounded(size);
-let (s_t4, r_t4) = bounded(size);
-
-b::new(
-    [s_t1, s_t2, s_t3]
-)
-    .start()
-    .next
-    .finish()
-    .collect()
-
-
-b.run_pool()
-
-*/

@@ -105,7 +105,7 @@ pub trait Deserialize {
 }
 
 pub trait ZipCrypt {
-    fn unzip_decrypt(&self, ctx: &Ctx) -> Vec<u8>;
+    fn unzip_decrypt(&self, ctx: &Ctx) -> Self;
     fn zip_encrypt(ctx: &Ctx, buf: Vec<u8>, seq: u64) -> Self;
 }
 
@@ -268,7 +268,9 @@ impl Deserialize for FrameV1 {
 
 impl ZipCrypt for FrameV1 {
 
-    fn unzip_decrypt(&self, ctx: &Ctx) -> Vec<u8> {
+    fn unzip_decrypt(&self, ctx: &Ctx) -> Self {
+        let mut processed = vec![];
+
         let mut reader: Box<dyn Read> = match self.compression_alg {
             COMPRESSION_ALG_NULL => {
                 panic!{"compression type not set {}", self.compression_alg}
@@ -299,7 +301,7 @@ impl ZipCrypt for FrameV1 {
             let mut data = vec![];
             reader.read_to_end(&mut data).unwrap();
 
-            data
+            processed = data
         } else if self.encryption_alg == ENCRYPTION_ALG_CHACHPOLY20 {
 
             // 24 byte; unique per message
@@ -308,9 +310,19 @@ impl ZipCrypt for FrameV1 {
                 self.buf.as_ref()
             ).unwrap();
 
-            deciphertext
+            processed = deciphertext
         } else {
             panic!("encryption alg not supported {}", self.encryption_alg);
+        }
+
+        FrameV1{
+            seq: self.seq,
+            encryption_alg: self.encryption_alg,
+            compression_alg: self.compression_alg,
+            nonce: self.nonce.clone(),
+
+            buf_len: usize_u32(processed.len()),
+            buf: processed,
         }
 
     }
@@ -413,10 +425,10 @@ pub fn get_linux_context() -> Ctx {
 
         close_all: false,
         
-        //compression_alg: COMPRESSION_ALG_NONE,
-        compression_alg: COMPRESSION_ALG_GZIP,
-        //encryption_alg: ENCRYPTION_ALG_TESTING_ONLY_NONE,
-        encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
+        compression_alg: COMPRESSION_ALG_NONE,
+        //compression_alg: COMPRESSION_ALG_GZIP,
+        encryption_alg: ENCRYPTION_ALG_TESTING_ONLY_NONE,
+        //encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
     }
 }
 
