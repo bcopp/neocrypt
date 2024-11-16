@@ -1,3 +1,5 @@
+#![feature(slice_as_chunks)]
+
 extern crate sys_mount;
 
 mod hashing;

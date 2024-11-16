@@ -3,11 +3,14 @@
 
 use crossbeam_channel::Sender;
 use crossbeam_channel::Receiver;
+use log::debug;
+use rayon::iter::ParallelBridge;
 use tar::Archive;
 use tar::Builder;
 use crate::common::*;
 use core::ops::Range;
 use core::sync;
+use std::borrow::BorrowMut;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
@@ -15,6 +18,8 @@ use std::io::BufWriter;
 use std::io::Write;
 use std::path::PathBuf;
 use std::thread::{spawn, JoinHandle};
+use rayon::iter::ParallelIterator;
+
 
 use crate::streaming::{StreamBufWriter, StreamBufReader};
 
@@ -90,7 +95,10 @@ fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<Vec<u8>>, sender: Sender<T>) -
 
 
         let seq_atomic = sync::atomic::AtomicU64::new(0);
-        receiver.into_iter().for_each(|buf| {
+        receiver
+            .into_iter()
+            //.par_bridge()
+            .for_each(|buf| {
 
             let seq = seq_atomic.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
@@ -112,13 +120,20 @@ fn spawn_decrypt<T>(ctx: &Ctx, receiver: Receiver<T>, sender: Sender<Vec<u8>>) -
         T: ZipCrypt,
         T: Serialize,
         T: Deserialize,
+        T: Sequenced,
         T: SetBuf,
     {
 
     let ctx = ctx.clone();
     spawn(move || {
 
-        receiver.into_iter().for_each(|frame| {
+        receiver
+            .into_iter()
+            //.par_bridge()
+            .for_each(|frame| {
+
+            debug!("seq {}", frame.get_seq());
+
             let data = frame.unzip_decrypt(&ctx);
             match sender.send(data) {
                 Ok(()) => {},
@@ -193,14 +208,6 @@ fn spawn_order_by_seq<T>(receiver: Receiver<T>, sender: Sender<T>) -> JoinHandle
     })
 }
 
-fn vec_from_range(range: Range<usize>) -> Vec<u8> {
-    let mut v = vec![];
-    for _ in range{
-        v.push(rand::random::<u8>());
-    }
-    return v;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,69 +215,12 @@ mod tests {
     use crossbeam::thread;
     use crossbeam_channel::{bounded, unbounded};
     use log::debug;
+    use rayon::iter::split;
     use std::io::Cursor;
     use itertools::assert_equal;
 
     use crate::common::{get_linux_context, new_tmp_dir};
 
-    #[test]
-    fn test_streambuf_reader_writer() {
-        let t = &TestInit::new()
-            .storage()
-            .logger();
-
-        let datas = [
-            vec_from_range(0..1),
-            vec_from_range(0..2^8),
-            vec_from_range(0..2^8 + 1),
-            vec_from_range(0..2^8 - 1),
-            vec_from_range(0..DEFAULT_SIZE),
-            vec_from_range(0..DEFAULT_SIZE * 4),
-            vec_from_range(0..DEFAULT_SIZE * 4 + 1),
-            vec_from_range(0..DEFAULT_SIZE * 4 - 1),
-            vec_from_range(0..DEFAULT_SIZE * 4 + 2^8),
-        ];
-
-        for d1 in datas {
-            let d1 = Arc::new(Mutex::new(d1));
-            let d2 = Arc::new(Mutex::new(vec![]));
-
-            let d1_cpy = d1.clone();
-            let d2_cpy = d2.clone();
-
-            let (s, r) = unbounded();
-
-            let t1 = spawn(move ||{
-                let mut sw = StreamBufWriter::new(s);
-
-                let d = &d1_cpy.lock().unwrap();
-                sw.write_all(d).unwrap(); // write into sw
-                sw.flush().unwrap();
-            });
-
-
-            let t2 = spawn(move ||{
-                let mut sr = StreamBufReader::new(r);
-
-                let mut d = d2_cpy.lock().unwrap();
-                sr.read_to_end(&mut d).unwrap(); // read from sr
-            });
-
-            t1.join().unwrap();
-            t2.join().unwrap();
-
-            {
-                let d1 = &d1.lock().unwrap();
-                let d2 = &d2.lock().unwrap();
-
-                assert_eq!(d1.len(), d2.len());
-
-                for i in (0 .. d1.len()).into_iter() {
-                    assert_eq!(d1[i], d2[i]);
-                }
-            }
-        }
-    }
 
     #[test]
     #[ignore]
@@ -306,70 +256,104 @@ mod tests {
         let ctx = &t.get_ctx();
         let size = t.get_channel_size();
 
-        let datas = [
-            vec_from_range(0..1),
-            vec_from_range(0..2^8),
-            vec_from_range(0..2^8 + 1),
-            vec_from_range(0..2^8 - 1),
-            vec_from_range(0..DEFAULT_SIZE),
-            vec_from_range(0..DEFAULT_SIZE * 4),
-            vec_from_range(0..DEFAULT_SIZE * 4 + 1),
-            vec_from_range(0..DEFAULT_SIZE * 4 - 1),
-            vec_from_range(0..DEFAULT_SIZE * 4 + 2^8),
-            vec_from_range(0..DEFAULT_SIZE * 256 + 2^8),
+        let mut datas = [
+            // rand_vec(0..1),
+            // rand_vec(0..256),
+            // rand_vec(0..DEFAULT_SIZE),
+            // rand_vec(0..DEFAULT_SIZE * 2 ),
+            // rand_vec(0..DEFAULT_SIZE * 4),
+            // rand_vec(0..DEFAULT_SIZE * 4 + 8),
+            // rand_vec(0..DEFAULT_SIZE * 4 - 1),
+            rand_vec(0..DEFAULT_SIZE * 1000 + 256),
         ];
 
-        for d1 in datas {
-            let d1 = Arc::new(Mutex::new(d1));
-            let d2 = Arc::new(Mutex::new(vec![]));
-
-            let d1_cpy = d1.clone();
-            let d2_cpy = d2.clone();
+        let data_msgs: Vec<Vec<Vec<u8>>> = datas.iter().map(|d| {split_data(d)}).collect();
 
 
-            let (s_packer, r_packer) = bounded(size);
+        for (msgs, data) in itertools::zip_eq(data_msgs, datas) {
+            debug!("data len{}", data.len());
+
+            let m_msgs = Arc::new(Mutex::new(msgs));
+            let m_processed = Arc::new(Mutex::new(vec![]));
+
+            let m_msgs_cpy = m_msgs.clone();
+            let m_processed_cpy = m_processed.clone();
+
+            let (s_reader, r_reader) = bounded(size);
             let (s_order_by_seq, r_order_by_seq) = bounded::<FrameV1>(size);
             let (s_decrypter, r_decrypter) = bounded::<FrameV1>(size);
-            let (s_unpacker, r_unpacker) = bounded(size);
+            let (s_writer, r_writer) = bounded(size);
 
-
-            let encrypter_t = spawn_encrypt(ctx, r_packer, s_order_by_seq);
+            let encrypter_t = spawn_encrypt(ctx, r_reader, s_order_by_seq);
             let order_by_seq = spawn_order_by_seq(r_order_by_seq, s_decrypter);
-            let decrypter_t = spawn_decrypt(ctx, r_decrypter, s_unpacker);
+            let decrypter_t = spawn_decrypt(ctx, r_decrypter, s_writer);
 
-            // start sending data
-            let packer_t = spawn(move || {
-                let d1 = d1_cpy.lock().unwrap();
-                s_packer.send(d1.to_vec());
 
-                park_sender(s_packer);
+            // writes out all buffers
+            let reader_t = spawn(move ||{
+                let msgs = &m_msgs_cpy.lock().unwrap();
+
+                msgs.iter().for_each(|bytes| {
+                    s_reader.send(bytes.clone()).unwrap();
+                })
             });
 
-            // start receiving data
-            let unpacker_t = spawn(move || {
-                let mut d2 = d2_cpy.lock().unwrap();
-                r_unpacker.iter().for_each(|d| {
-                    d2.extend_from_slice(&d);
+
+            let writer_t = spawn(move ||{
+                let mut processed = m_processed_cpy.lock().unwrap();
+
+                r_writer.iter().for_each(|data|{
+                    processed.extend(data);
                 });
             });
 
-            packer_t.join().unwrap();
+            reader_t.join().unwrap();
             encrypter_t.join().unwrap();
             order_by_seq.join().unwrap();
             decrypter_t.join().unwrap();
-            unpacker_t.join().unwrap();
-
+            writer_t.join().unwrap();
 
             {
-                let d1 = &d1.lock().unwrap();
-                let d2 = &d2.lock().unwrap();
+                let processed = m_processed.lock().unwrap();
 
-                assert_eq!(d1.len(), d2.len());
-                debug!("d1 {}, d2 {}", d1.len(), d2.len());
+                assert_eq!(processed.len(), data.len());
 
-                for i in (0 .. d1.len()).into_iter() {
-                    assert_eq!(d1[i], d2[i]);
+                for (i, (pd, d)) in itertools::enumerate(itertools::zip_eq(processed.to_vec(), data)){
+                    if pd != d {
+                        debug!("at index {}", i);
+                    }
+                    assert_eq!(pd, d);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn test_split_data() {
+        let datas = [
+            rand_vec(0..1),
+            rand_vec(0..256),
+            rand_vec(0..256 + 1),
+            rand_vec(0..256 - 1),
+            rand_vec(0..DEFAULT_SIZE),
+            rand_vec(0..DEFAULT_SIZE * 4),
+            rand_vec(0..DEFAULT_SIZE * 4 + 1),
+            rand_vec(0..DEFAULT_SIZE * 4 - 1),
+            rand_vec(0..DEFAULT_SIZE * 4 + 256),
+        ];
+
+        let bufs: Vec<Vec<Vec<u8>>> = datas.iter().map(|d| {split_data(d)}).collect();
+
+        for (data, buf) in itertools::zip_eq(datas, bufs){
+
+            let buf_flat: Vec<u8> = buf.into_iter().flatten().collect::<Vec<_>>();
+            assert_eq!(data.len(), buf_flat.len());
+
+            for (i, (d, b)) in itertools::enumerate(itertools::zip_eq(data, buf_flat)) {
+                if d != b {
+                    debug!("at index {}", i);
+                }
+                assert_eq!(d, b);
             }
         }
     }

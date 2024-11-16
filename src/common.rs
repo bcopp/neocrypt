@@ -1,4 +1,4 @@
-use std::{fs::{create_dir_all, OpenOptions}, io::{self, BufReader, Cursor, Read}, os::unix::fs::MetadataExt, path::PathBuf, str::FromStr};
+use std::{fs::{create_dir_all, OpenOptions}, io::{self, BufReader, Cursor, Read}, ops::Range, os::unix::fs::MetadataExt, path::PathBuf, str::FromStr};
 use flate2::{bufread::{GzDecoder, GzEncoder}, Compression};
 use itertools::join;
 use jwalk::WalkDir;
@@ -673,6 +673,29 @@ pub fn new_uid(length: u64) -> String {
             }).collect()
     ).unwrap()
 }
+
+// create a random vector
+pub fn rand_vec(range: Range<usize>) -> Vec<u8> {
+    let mut v = vec![];
+    for _ in range{
+        v.push(rand::random::<u8>());
+    }
+    return v;
+}
+
+// split data into DEFAULT sized buffers for msg passing
+pub fn split_data(data: &Vec<u8>) -> Vec<Vec<u8>> {
+    let (chunks, remainder) = data.as_chunks::<DEFAULT_SIZE>();
+    let mut buf: Vec<Vec<u8>> = chunks
+        .into_iter()
+        .map(|c| {Vec::from(c)}).collect();
+
+    buf.push(Vec::from(remainder));
+
+    buf
+}
+
+
 
 pub struct Init{
     ctx: Ctx,

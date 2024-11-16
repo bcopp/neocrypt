@@ -103,7 +103,7 @@ impl BstRng{
             panic!("empty seed")
         }
 
-        println!("FILL BYTES: {}", dest.len());
+        // println!("FILL BYTES: {}", dest.len());
         for i in 0..dest.len(){
             dest[i] = self.0.0[i + self.1]
         }
