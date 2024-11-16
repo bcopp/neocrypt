@@ -1,0 +1,126 @@
+[2024-11-15T19:26:32.315302220Z DEBUG bastion_mount::crypter] 1
+[2024-11-15T19:27:57.702189386Z DEBUG bastion_mount::crypter] 1
+[2024-11-15T19:28:18.803261512Z DEBUG bastion_mount::crypter] 1
+[2024-11-15T19:28:18.803368231Z DEBUG bastion_mount::crypter] 1
+[2024-11-15T19:29:04.382607168Z DEBUG bastion_mount::crypter] 1
+[2024-11-15T19:29:04.382739760Z DEBUG bastion_mount::crypter] 0
+[2024-11-15T19:29:16.162232178Z DEBUG bastion_mount::crypter] 1
+[2024-11-15T19:29:16.162342200Z DEBUG bastion_mount::crypter] 0
+[2024-11-15T19:29:16.162487024Z DEBUG bastion_mount::crypter] 10
+[2024-11-15T19:29:16.162525062Z DEBUG bastion_mount::crypter] 0
+[2024-11-15T19:29:16.162611782Z DEBUG bastion_mount::crypter] 11
+[2024-11-15T19:29:16.162648505Z DEBUG bastion_mount::crypter] 0
+[2024-11-15T19:29:16.165482107Z DEBUG bastion_mount::crypter] 4000000
+[2024-11-15T19:29:16.169195215Z DEBUG bastion_mount::crypter] 0
+[2024-11-15T19:29:16.359619337Z DEBUG bastion_mount::crypter] 0
+[2024-11-15T19:29:16.359693428Z DEBUG bastion_mount::crypter] 0
+[2024-11-15T19:29:17.018192570Z DEBUG bastion_mount::crypter] 0
+[2024-11-15T19:29:17.018267487Z DEBUG bastion_mount::crypter] 0
+[2024-11-15T20:25:22.536248641Z DEBUG bastion_mount::common] getting folder md5 of "/home/cflex/Dropbox/code2/bastion-mount/dummy_data"
+[2024-11-15T20:25:25.727904881Z DEBUG bastion_mount::common] getting folder md5 of "/home/cflex/.bastion_test/Fri, 15 Nov 2024 20:25:22 +0000_HKJ7GeYO"
+[2024-11-15T20:26:38.235816830Z DEBUG bastion_mount::common] getting folder md5 of "/home/cflex/Dropbox/code2/bastion-mount/dummy_data"
+[2024-11-15T20:26:41.352159712Z DEBUG bastion_mount::common] getting folder md5 of "/home/cflex/.bastion_test/2024-11-15T20:26:38.134321648+00:00_HB8y15R0"
+[2024-11-15T22:14:56.856886433Z DEBUG bastion_mount::crypter::tests] d1 1, d2 1
+[2024-11-15T22:15:09.185801575Z DEBUG bastion_mount::crypter::tests] d1 1, d2 1
+[2024-11-15T22:15:09.186088004Z DEBUG bastion_mount::crypter::tests] d1 10, d2 10
+[2024-11-15T22:15:09.186481930Z DEBUG bastion_mount::crypter::tests] d1 11, d2 11
+[2024-11-15T22:15:09.186723481Z DEBUG bastion_mount::crypter::tests] d1 5, d2 5
+[2024-11-15T22:15:09.187089213Z DEBUG bastion_mount::crypter::tests] d1 8000, d2 8000
+[2024-11-15T22:15:09.187690992Z DEBUG bastion_mount::crypter::tests] d1 32000, d2 32000
+[2024-11-15T22:15:09.189108627Z DEBUG bastion_mount::crypter::tests] d1 32001, d2 32001
+[2024-11-15T22:15:09.190591258Z DEBUG bastion_mount::crypter::tests] d1 31999, d2 31999
+[2024-11-15T22:15:09.192614531Z DEBUG bastion_mount::crypter::tests] d1 32010, d2 32010
+[2024-11-15T23:14:29.419127925Z DEBUG bastion_mount::crypter::tests] d1 1, d2 1
+[2024-11-15T23:14:29.420000708Z DEBUG bastion_mount::crypter::tests] d1 10, d2 10
+[2024-11-15T23:14:29.420408587Z DEBUG bastion_mount::crypter::tests] d1 11, d2 11
+[2024-11-15T23:14:29.420731600Z DEBUG bastion_mount::crypter::tests] d1 5, d2 5
+[2024-11-15T23:14:29.421086207Z DEBUG bastion_mount::crypter::tests] d1 8000, d2 8000
+[2024-11-15T23:14:29.422161068Z DEBUG bastion_mount::crypter::tests] d1 32000, d2 32000
+[2024-11-15T23:14:29.423974638Z DEBUG bastion_mount::crypter::tests] d1 32001, d2 32001
+[2024-11-15T23:14:29.425617598Z DEBUG bastion_mount::crypter::tests] d1 31999, d2 31999
+[2024-11-15T23:14:29.427227360Z DEBUG bastion_mount::crypter::tests] d1 32010, d2 32010
+[2024-11-15T23:15:05.318683570Z DEBUG bastion_mount::crypter::tests] d1 1, d2 1
+[2024-11-15T23:15:05.319894239Z DEBUG bastion_mount::crypter::tests] d1 10, d2 10
+[2024-11-15T23:15:05.321256710Z DEBUG bastion_mount::crypter::tests] d1 11, d2 11
+[2024-11-15T23:15:05.322441880Z DEBUG bastion_mount::crypter::tests] d1 5, d2 5
+[2024-11-15T23:15:05.324083811Z DEBUG bastion_mount::crypter::tests] d1 8000, d2 8000
+[2024-11-15T23:15:05.326601539Z DEBUG bastion_mount::crypter::tests] d1 32000, d2 32000
+[2024-11-15T23:15:05.332931898Z DEBUG bastion_mount::crypter::tests] d1 32001, d2 32001
+[2024-11-15T23:15:05.342922416Z DEBUG bastion_mount::crypter::tests] d1 31999, d2 31999
+[2024-11-15T23:15:05.347267654Z DEBUG bastion_mount::crypter::tests] d1 32010, d2 32010
+[2024-11-15T23:15:16.029439420Z DEBUG bastion_mount::crypter::tests] d1 1, d2 1
+[2024-11-15T23:15:16.030691464Z DEBUG bastion_mount::crypter::tests] d1 10, d2 10
+[2024-11-15T23:15:16.031816505Z DEBUG bastion_mount::crypter::tests] d1 11, d2 11
+[2024-11-15T23:15:16.032892813Z DEBUG bastion_mount::crypter::tests] d1 5, d2 5
+[2024-11-15T23:15:16.040348942Z DEBUG bastion_mount::crypter::tests] d1 8000, d2 8000
+[2024-11-15T23:15:16.068622872Z DEBUG bastion_mount::crypter::tests] d1 32000, d2 32000
+[2024-11-15T23:15:16.096394679Z DEBUG bastion_mount::crypter::tests] d1 32001, d2 32001
+[2024-11-15T23:15:16.124416666Z DEBUG bastion_mount::crypter::tests] d1 31999, d2 31999
+[2024-11-15T23:15:16.150533201Z DEBUG bastion_mount::crypter::tests] d1 32010, d2 32010
+[2024-11-16T01:26:57.540033652Z DEBUG bastion_mount::crypter::tests] d1 1, d2 1
+[2024-11-16T01:26:57.547984257Z DEBUG bastion_mount::crypter::tests] d1 10, d2 10
+[2024-11-16T01:26:57.549502327Z DEBUG bastion_mount::crypter::tests] d1 11, d2 11
+[2024-11-16T01:26:57.550717380Z DEBUG bastion_mount::crypter::tests] d1 5, d2 5
+[2024-11-16T01:26:57.558779765Z DEBUG bastion_mount::crypter::tests] d1 8000, d2 8000
+[2024-11-16T01:26:57.599403736Z DEBUG bastion_mount::crypter::tests] d1 32000, d2 32000
+[2024-11-16T01:26:57.644380058Z DEBUG bastion_mount::crypter::tests] d1 32001, d2 32001
+[2024-11-16T01:26:57.680626880Z DEBUG bastion_mount::crypter::tests] d1 31999, d2 31999
+[2024-11-16T01:26:57.717494772Z DEBUG bastion_mount::crypter::tests] d1 32010, d2 32010
+[2024-11-16T01:26:59.391472216Z DEBUG bastion_mount::crypter::tests] d1 2048010, d2 2048010
+[2024-11-16T01:29:51.701407048Z DEBUG bastion_mount::common] getting folder md5 of "/home/cflex/Dropbox/code2/bastion-mount/dummy_data"
+[2024-11-16T01:29:54.962444155Z DEBUG bastion_mount::common] getting folder md5 of "/home/cflex/.bastion_test/2024-11-16T01:29:51.513550551+00:00_3UPFselO"
+[2024-11-16T03:44:05.857877958Z DEBUG bastion_mount::crypter::tests] d1 1, d2 1
+[2024-11-16T03:44:05.859191913Z DEBUG bastion_mount::crypter::tests] d1 10, d2 10
+[2024-11-16T03:44:05.860805012Z DEBUG bastion_mount::crypter::tests] d1 11, d2 11
+[2024-11-16T03:44:05.862366942Z DEBUG bastion_mount::crypter::tests] d1 5, d2 5
+[2024-11-16T03:44:05.873171334Z DEBUG bastion_mount::crypter::tests] d1 8000, d2 8000
+[2024-11-16T03:44:05.900530311Z DEBUG bastion_mount::crypter::tests] d1 32000, d2 32000
+[2024-11-16T03:44:05.931040887Z DEBUG bastion_mount::crypter::tests] d1 32001, d2 32001
+[2024-11-16T03:44:05.970892370Z DEBUG bastion_mount::crypter::tests] d1 31999, d2 31999
+[2024-11-16T03:44:06.001765213Z DEBUG bastion_mount::crypter::tests] d1 32010, d2 32010
+[2024-11-16T03:44:07.662684188Z DEBUG bastion_mount::crypter::tests] d1 2048010, d2 2048010
+[2024-11-16T03:44:29.615871850Z DEBUG bastion_mount::crypter::tests] d1 1, d2 1
+[2024-11-16T03:44:29.617281433Z DEBUG bastion_mount::crypter::tests] d1 10, d2 10
+[2024-11-16T03:44:29.618982283Z DEBUG bastion_mount::crypter::tests] d1 11, d2 11
+[2024-11-16T03:44:29.620815337Z DEBUG bastion_mount::crypter::tests] d1 5, d2 5
+[2024-11-16T03:44:29.630438952Z DEBUG bastion_mount::crypter::tests] d1 8000, d2 8000
+[2024-11-16T03:44:29.659763415Z DEBUG bastion_mount::crypter::tests] d1 32000, d2 32000
+[2024-11-16T03:44:29.690830745Z DEBUG bastion_mount::crypter::tests] d1 32001, d2 32001
+[2024-11-16T03:44:29.722638835Z DEBUG bastion_mount::crypter::tests] d1 31999, d2 31999
+[2024-11-16T03:44:29.757957120Z DEBUG bastion_mount::crypter::tests] d1 32010, d2 32010
+[2024-11-16T03:44:31.431797954Z DEBUG bastion_mount::crypter::tests] d1 2048010, d2 2048010
+[2024-11-16T03:44:48.576807034Z DEBUG bastion_mount::crypter::tests] d1 20480010, d2 20480010
+[2024-11-16T03:45:02.711710941Z DEBUG bastion_mount::crypter::tests] d1 1, d2 1
+[2024-11-16T03:45:02.713419334Z DEBUG bastion_mount::crypter::tests] d1 10, d2 10
+[2024-11-16T03:45:02.715085389Z DEBUG bastion_mount::crypter::tests] d1 11, d2 11
+[2024-11-16T03:45:02.716513840Z DEBUG bastion_mount::crypter::tests] d1 5, d2 5
+[2024-11-16T03:45:02.725121551Z DEBUG bastion_mount::crypter::tests] d1 8000, d2 8000
+[2024-11-16T03:45:02.757631556Z DEBUG bastion_mount::crypter::tests] d1 32000, d2 32000
+[2024-11-16T03:45:02.795176562Z DEBUG bastion_mount::crypter::tests] d1 32001, d2 32001
+[2024-11-16T03:45:02.837067306Z DEBUG bastion_mount::crypter::tests] d1 31999, d2 31999
+[2024-11-16T03:45:02.877278164Z DEBUG bastion_mount::crypter::tests] d1 32010, d2 32010
+[2024-11-16T03:45:04.586266348Z DEBUG bastion_mount::crypter::tests] d1 2048010, d2 2048010
+[2024-11-16T03:45:21.405618459Z DEBUG bastion_mount::crypter::tests] d1 20480010, d2 20480010
+[2024-11-16T03:46:39.360289813Z DEBUG bastion_mount::crypter::tests] d1 1, d2 1
+[2024-11-16T03:46:39.362023801Z DEBUG bastion_mount::crypter::tests] d1 10, d2 10
+[2024-11-16T03:46:39.363494311Z DEBUG bastion_mount::crypter::tests] d1 11, d2 11
+[2024-11-16T03:46:39.364681161Z DEBUG bastion_mount::crypter::tests] d1 5, d2 5
+[2024-11-16T03:46:39.372313753Z DEBUG bastion_mount::crypter::tests] d1 8000, d2 8000
+[2024-11-16T03:46:39.408341773Z DEBUG bastion_mount::crypter::tests] d1 32000, d2 32000
+[2024-11-16T03:46:39.448390889Z DEBUG bastion_mount::crypter::tests] d1 32001, d2 32001
+[2024-11-16T03:46:39.496394904Z DEBUG bastion_mount::crypter::tests] d1 31999, d2 31999
+[2024-11-16T03:46:39.539083785Z DEBUG bastion_mount::crypter::tests] d1 32010, d2 32010
+[2024-11-16T03:46:41.236059259Z DEBUG bastion_mount::crypter::tests] d1 2048010, d2 2048010
+[2024-11-16T03:46:58.637017133Z DEBUG bastion_mount::crypter::tests] d1 20480010, d2 20480010
+[2024-11-16T03:50:27.200414401Z DEBUG bastion_mount::crypter::tests] d1 1, d2 1
+[2024-11-16T03:50:27.202194989Z DEBUG bastion_mount::crypter::tests] d1 10, d2 10
+[2024-11-16T03:50:27.203760025Z DEBUG bastion_mount::crypter::tests] d1 11, d2 11
+[2024-11-16T03:50:27.205312902Z DEBUG bastion_mount::crypter::tests] d1 5, d2 5
+[2024-11-16T03:50:27.214609058Z DEBUG bastion_mount::crypter::tests] d1 8000, d2 8000
+[2024-11-16T03:50:27.242924492Z DEBUG bastion_mount::crypter::tests] d1 32000, d2 32000
+[2024-11-16T03:50:27.282823780Z DEBUG bastion_mount::crypter::tests] d1 32001, d2 32001
+[2024-11-16T03:50:27.319180844Z DEBUG bastion_mount::crypter::tests] d1 31999, d2 31999
+[2024-11-16T03:50:27.357487549Z DEBUG bastion_mount::crypter::tests] d1 32010, d2 32010
+[2024-11-16T03:50:29.055939794Z DEBUG bastion_mount::crypter::tests] d1 2048010, d2 2048010
+[2024-11-16T03:50:45.978756904Z DEBUG bastion_mount::crypter::tests] d1 20480010, d2 20480010
+[2024-11-16T03:53:31.831767640Z DEBUG bastion_mount::crypter::tests] d1 1, d2 1
