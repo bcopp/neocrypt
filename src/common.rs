@@ -1,5 +1,4 @@
-use std::{any::Any, fs::{create_dir_all, remove_dir_all, File, OpenOptions}, io::{self, BufRead, BufReader, BufWriter, Cursor, Read, Write}, os::unix::fs::MetadataExt, path::{Path, PathBuf}, str::FromStr, time::Instant};
-use bitvec::{ptr::read, vec};
+use std::{fs::{create_dir_all, OpenOptions}, io::{self, BufReader, Cursor, Read}, os::unix::fs::MetadataExt, path::PathBuf, str::FromStr};
 use flate2::{bufread::{GzDecoder, GzEncoder}, Compression};
 use itertools::join;
 use jwalk::WalkDir;
@@ -10,7 +9,6 @@ use rand::{thread_rng, Rng};
 use chacha20poly1305::XNonce;
 use chacha20poly1305::aead::Aead;
 
-use std::sync::Once;
 
 pub const KB: usize = 1000;
 pub const MB: usize = 1000 * KB;
@@ -388,8 +386,6 @@ impl ZipCrypt for FrameV1 {
             panic!("encryption alg not supported {}", ctx.encryption_alg);
         }
     }
-
-
 }
 
 const PWD: &str = "V7Pvxzhhw9gLWV3k";
@@ -428,7 +424,6 @@ pub fn get_linux_context() -> Ctx {
 
 use chrono::DateTime;
 use chrono::Utc;
-use tar::Builder;
 
 pub fn new_tmp_dir() -> (PathBuf, String) {
     let ctx = &get_linux_context();
@@ -741,7 +736,6 @@ impl TestInit {
 }
 
 fn init_logger() -> Result<(), Box<dyn std::error::Error>>{
-    /*
     // Configure logger at runtime
     fern::Dispatch::new()
         // Perform allocation-free log formatting
@@ -761,8 +755,6 @@ fn init_logger() -> Result<(), Box<dyn std::error::Error>>{
         .chain(fern::log_file("output.log")?)
         // Apply globally
         .apply()?;
-
-    */
     Ok(())
 }
 

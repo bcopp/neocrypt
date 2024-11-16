@@ -1,150 +1,25 @@
 /* Encrpter & Decrypter file
 */
 
-use cipher::generic_array::iter;
-use crossbeam::select;
-use crossbeam_channel::bounded;
-use crossbeam_channel::Select;
-use crossbeam_channel::SendError;
 use crossbeam_channel::Sender;
 use crossbeam_channel::Receiver;
-use flate2::bufread::GzDecoder;
-use flate2::bufread::GzEncoder;
-use flate2::Compression;
-use log::debug;
-use log::trace;
-use rayon::iter::ParallelBridge;
-use rayon::iter::ParallelIterator;
-use rsa::pkcs8::der::Sequence;
 use tar::Archive;
 use tar::Builder;
 use crate::common::*;
-use crate::new;
-use core::num;
 use core::ops::Range;
 use core::sync;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::fs::File;
-use std::fs::OpenOptions;
-use std::io;
 use std::io::BufReader;
 use std::io::BufWriter;
-use std::io::Read;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::thread::sleep;
 use std::thread::{spawn, JoinHandle};
-use std::time::Duration;
-use std::time::Instant;
-use flate2::GzBuilder;
+
+use crate::streaming::{StreamBufWriter, StreamBufReader};
 
 
 fn park_sender<T>(sender: Sender<T>) { while ! sender.is_empty() {} }
-
-fn encrypt(ctx: &Ctx, src: &PathBuf, trg: &PathBuf) -> Result<(), std::io::Error> {
-    let channel_size =  num_cpus::get() * 2;
-
-    let src_reader = BufReader::new(
-        OpenOptions::new().read(true).open(src)?
-    );
-
-    let trg_writer = BufWriter::new(
-        OpenOptions::new().write(true).create_new(true).open(trg)?
-    );
-
-    /* ENCRYPT
-
-    let (
-        reader_s_crypter,
-        crypter_r_reader
-    ) = bounded(channel_size);
-
-    let (
-        crypter_s_writer,
-        writer_r_crypter
-    ) = bounded::<FrameV1>(channel_size);
-
-        reader(FILE: packer_r) -> u8s
-
-        encrypt_serialize<T> (u8s) -> u8s
-
-        writer (u8s)
-    */
-
-    /* DECRYPT
-        reader_crypt(unpacker_r) -> T
-        decrypt_deserialize (T) -> u8s
-        writer (u8s)
-            upacker -> FILE: u8s
-    */
-
-    // packer_reader = 
-
-    /*
-    let (
-        reader_s_crypter,
-        crypter_r_reader
-    ) = bounded(channel_size);
-
-    let (
-        crypter_s_writer,
-        writer_r_crypter
-    ) = bounded(channel_size);
-
-
-    let reader_t = spawn_reader(
-        packer_reader,
-        reader_s_crypter
-    );
-
-    let crypter_t = spawn_encrypt<FrameV1>(
-        ctx,
-        crypter_r_reader,
-        crypter_s_writer
-    );
-
-    let writer_t = spawn_writer(
-        trg_writer,
-        writer_r_crypter
-    );
-
-    reader_t.join().unwrap();
-    crypter_t.join().unwrap();
-    writer_t.join().unwrap();
-
-    */
-    Ok(())
-} 
-
-fn decrypt(ctx: &Ctx, src: &PathBuf, trg: &PathBuf) -> Result<(), std::io::Error> {
-    let channel_size =  num_cpus::get() * 2;
-
-    let src_reader = BufReader::new(
-        OpenOptions::new().read(true).open(src)?
-    );
-
-    let trg_writer = BufWriter::new(
-        OpenOptions::new().write(true).create_new(true).open(trg)?
-    );
-
-    let (reader_s_crypter, crypter_r_reader) = bounded(channel_size);
-    let (crypter_s_writer, writer_r_crypter) = bounded(channel_size);
-
-    let reader_t = spawn_reader(src_reader, reader_s_crypter);
-    //let crypter_t = spawn_decrypt(ctx, crypter_r_reader, crypter_s_writer);
-    let writer_t = spawn_writer(trg_writer, writer_r_crypter);
-
-    reader_t.join().unwrap();
-    //crypter_t.join().unwrap();
-    writer_t.join().unwrap();
-
-    Ok(())
-} 
 
 fn spawn_reader(mut packer_r: BufReader<File>, sender: Sender<Vec<u8>>) -> JoinHandle<()> {
     spawn(move || {
@@ -263,111 +138,6 @@ fn spawn_writer(mut w: BufWriter<File>, receiver: Receiver<Vec<u8>>) -> JoinHand
     })
 }
 
-struct StreamBufWriter {
-    s: Sender<Vec<u8>>,
-    buf: Vec<u8>,
-}
-
-impl StreamBufWriter {
-    fn new(sender: Sender<Vec<u8>>) -> Self {
-        StreamBufWriter{
-            s: sender,
-            buf: vec![],
-        }
-    }
-}
-
-impl Write for StreamBufWriter {
-
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-
-        self.buf.extend_from_slice(buf);
-
-
-        if self.buf.len() > DEFAULT_SIZE {
-
-            match self.s.send(self.buf.clone()) {
-                Ok(()) => {},
-                Err(e) => {trace!("error: streambufwriter send {:?}", e)}
-            }
-            self.buf = vec![];
-        }
-
-        return Ok(buf.len());
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-
-        if ! self.buf.is_empty() {
-            match self.s.send(self.buf.clone()) {
-                Ok(()) => {self.buf = vec![]},
-                Err(e) => {trace!("error: streambufwriter send, internal buf len {:?}, {:?}", self.buf.len(), e)},
-            }
-        }
-
-        Ok(())
-    }
-
-}
-
-// auto flush and wait for channel empty
-impl Drop for StreamBufWriter{
-    fn drop(&mut self) {
-        self.flush().unwrap();
-        while ! self.s.is_empty() {}
-    }
-}
-
-
-struct StreamBufReader{
-    buf: Vec<u8>,
-
-    r: Receiver<Vec<u8>>,
-    is_closed: bool,
-}
-
-impl StreamBufReader{
-    fn new(receiver: Receiver<Vec<u8>>) -> Self {
-
-        StreamBufReader{
-            buf: vec![],
-
-            r: receiver,
-            is_closed: false,
-        }
-    }
-}
-
-impl<'a> Read for StreamBufReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-
-        let mut bytes_read = 0;
-
-        while bytes_read != buf.len() {
-
-            if self.buf.is_empty() {
-                match self.r.recv() {
-                    Ok(b) => {self.buf = b},
-                    Err(_) => {return Ok(bytes_read);},
-                }
-            }
-
-            if self.buf.len() > buf.len() {
-                let (left, right) = self.buf.split_at(buf.len());
-                buf.copy_from_slice(left);
-                bytes_read += left.len();
-                self.buf = Vec::from(right);
-            } else {
-                buf[..self.buf.len()].copy_from_slice(&self.buf);
-                bytes_read += self.buf.len();
-                self.buf = vec![];
-            }
-        }
-
-        Ok(bytes_read)
-    }
-}
-
 
 
 fn spawn_packer(src: &PathBuf, sw: StreamBufWriter) -> JoinHandle<()>{
@@ -434,10 +204,11 @@ fn vec_from_range(range: Range<usize>) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use std::{io::{Read, Write}, sync::{Arc, Mutex}};
     use crossbeam::thread;
-    use crossbeam_channel::unbounded;
-    use io::Cursor;
+    use crossbeam_channel::{bounded, unbounded};
+    use log::debug;
+    use std::io::Cursor;
     use itertools::assert_equal;
 
     use crate::common::{get_linux_context, new_tmp_dir};
