@@ -1,4 +1,5 @@
 use std::{fs::{create_dir_all, OpenOptions}, io::{self, BufReader, Cursor, Read}, ops::Range, os::unix::fs::MetadataExt, path::PathBuf, str::FromStr};
+use dirs::home_dir;
 use flate2::{bufread::{GzDecoder, GzEncoder}, Compression};
 use itertools::join;
 use jwalk::WalkDir;
@@ -406,7 +407,8 @@ const PWD: &str = "V7Pvxzhhw9gLWV3k";
 const PWD_RAW: &str = "$scrypt$ln=17,r=8,p=1$AeWF6c7Pdso2YZy4PfMs+g$YyBx8qB2Hv3pOJSKbR/vRzGRL8i/ZIeuCTtt/GuW5Hto2mHs8vz0brNyHzmqXvcfk03ZymcMgKtVkUk9tpEx6w";
 
 pub fn get_linux_context() -> Ctx {
-    let home = PathBuf::from("/home/cflex").join(".bastion_test");
+    let home = home_dir().unwrap();
+    let home = home.join(".bastion_test");
     let mount_from = home.join("mount_from");
     let mount_to = home.join("mount_to");
 
@@ -427,10 +429,10 @@ pub fn get_linux_context() -> Ctx {
 
         close_all: false,
         
-        compression_alg: COMPRESSION_ALG_NONE,
-        //compression_alg: COMPRESSION_ALG_GZIP,
-        encryption_alg: ENCRYPTION_ALG_TESTING_ONLY_NONE,
-        //encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
+        // compression_alg: COMPRESSION_ALG_NONE,
+        compression_alg: COMPRESSION_ALG_GZIP,
+        //encryption_alg: ENCRYPTION_ALG_TESTING_ONLY_NONE,
+        encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
 
         testing_only_disable_decrypter_threads: false,
     }
@@ -793,7 +795,7 @@ fn init_logger() -> Result<(), Box<dyn std::error::Error>>{
         .chain(std::io::stdout())
         .chain(fern::log_file("output.log")?)
         // Apply globally
-        .apply()?;
+        .apply();
     Ok(())
 }
 
@@ -848,8 +850,11 @@ mod tests {
                 buf: vec![1u8; 256],
             },
         ];
+        debug!("serialize deserialize: new frame");
+        debug!("serialize deserialize: new frame");
 
         fs.iter().for_each(|f|{
+
 
             let f_ser = f.serialize();
             let f_cur = std::io::Cursor::new(f_ser);

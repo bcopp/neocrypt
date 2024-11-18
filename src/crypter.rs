@@ -294,7 +294,8 @@ mod tests {
 
 
         for (msgs, data) in itertools::zip_eq(data_msgs, datas) {
-            debug!("data len{}", data.len());
+            debug!("encrypt decrypt: processing data of len {} bytes", data.len());
+            debug!("encrypt decrypt: splitting data of len {} bytes into {} separate channel message", data.len(), msgs.len());
 
             let m_msgs = Arc::new(Mutex::new(msgs));
             let m_processed = Arc::new(Mutex::new(vec![]));
@@ -307,13 +308,19 @@ mod tests {
             let (s_decrypter, r_decrypter) = bounded::<FrameV1>(size);
             let (s_writer, r_writer) = bounded(size);
 
+            debug!("encrypt decrypt: spawn encrypter");
             let encrypter_t = spawn_encrypt(ctx, r_reader, s_decrypter);
+
+            debug!("encrypt decrypt: spawn decrypter");
             let decrypter_t = spawn_decrypt(ctx, r_decrypter, s_order_by_seq);
+
+            debug!("encrypt decrypt: spawn order by");
             let order_by_seq = spawn_order_by_seq(r_order_by_seq, s_writer);
 
 
             // writes out all buffers
             let reader_t = spawn(move ||{
+                debug!("encrypt decrypt: spawn reader in");
                 let msgs = &m_msgs_cpy.lock().unwrap();
 
                 msgs.iter().enumerate().for_each(|(seq , bytes)| {
@@ -321,18 +328,18 @@ mod tests {
                 });
 
                 // park_sender(s_reader);
-                debug!("channel closed: reader")
+                debug!("encrypt decrypt: channel closed: reader")
             });
 
 
             let writer_t = spawn(move ||{
+                debug!("encrypt decrypt: spawn writer out");
                 let mut processed = m_processed_cpy.lock().unwrap();
 
                 r_writer.iter().for_each(|frame|{
-                    debug!("writer seq {}", frame.get_seq());
                     processed.extend(frame.buf);
                 });
-                debug!("channel closed: writer")
+                debug!("encrypt decrypt: channel closed: writer")
             });
 
             writer_t.join().unwrap();
@@ -353,6 +360,7 @@ mod tests {
                     assert_eq!(pd, d);
                 }
             }
+            debug!("");
         }
     }
 
