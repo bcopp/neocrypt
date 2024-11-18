@@ -158,8 +158,8 @@ mod tests {
         let data_msgs: Vec<Vec<Vec<u8>>> = datas.iter().map(|d| {split_data(d)}).collect();
 
         for (msgs, data) in itertools::zip_eq(data_msgs, datas) {
-            debug!("data len{}", data.len());
-
+            let msgs_len = msgs.len();
+            debug!("streamingbuf: processing data len {} bytes", data.len());
             
             let m_msgs = Arc::new(Mutex::new(msgs));
             let m_processed = Arc::new(Mutex::new(vec![]));
@@ -167,10 +167,12 @@ mod tests {
             let m_msgs_cpy = m_msgs.clone();
             let m_processed_cpy = m_processed.clone();
 
+            debug!("streamingbuf: create s,r channel");
             let (s, r) = unbounded();
 
 
             // writes out all buffers
+            debug!("streamingbuf: spawn writer, send {} messages", &msgs_len);
             let t1 = spawn(move ||{
                 let msgs = &m_msgs_cpy.lock().unwrap();
 
@@ -183,6 +185,7 @@ mod tests {
             });
 
 
+            debug!("streamingbuf: spawn reader, recv {} messages", &msgs_len);
             let t2 = spawn(move ||{
                 let mut processed = m_processed_cpy.lock().unwrap();
 
