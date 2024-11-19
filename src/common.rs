@@ -15,7 +15,7 @@ pub const KB: usize = 1000;
 pub const MB: usize = 1000 * KB;
 pub const GB: usize = 1000 * MB;
 
-pub const DEFAULT_SIZE: usize = 8  * KB;
+pub const DEFAULT_SIZE: usize = 8 * KB;
 
 const ENCRYPTION_ALG_NULL: u16 = 0;
 const ENCRYPTION_ALG_TESTING_ONLY_NONE: u16 = 1;
@@ -53,8 +53,6 @@ pub struct Ctx{
     pub close_all: bool,
     pub compression_alg: u16,
     pub encryption_alg: u16,
-
-    pub testing_only_disable_decrypter_threads: bool,
 }
 
 #[derive(Clone)]
@@ -79,7 +77,7 @@ pub struct HeaderV1{
 }
 
 // field order is ser & deser order
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct FrameV1{
     pub seq: u64,               // [u64; 1]
 
@@ -429,16 +427,13 @@ pub fn get_linux_context() -> Ctx {
 
         close_all: false,
         
-        // compression_alg: COMPRESSION_ALG_NONE,
-        compression_alg: COMPRESSION_ALG_GZIP,
+        compression_alg: COMPRESSION_ALG_NONE,
+        // compression_alg: COMPRESSION_ALG_GZIP,
         //encryption_alg: ENCRYPTION_ALG_TESTING_ONLY_NONE,
         encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
-
-        testing_only_disable_decrypter_threads: false,
     }
 }
 
-// type RmDir = Box<dyn FnOnce() -> std::io::Result<()>>;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -549,6 +544,15 @@ pub fn usize_u64(n: usize) -> u64 {
 #[cfg(target_pointer_width = "64")]
 pub fn usize_u64(n: usize) -> u64 {
     u64::from_le_bytes(n.to_le_bytes())
+}
+
+#[cfg(target_pointer_width = "64")]
+pub fn usize_u128(n: usize) -> u128 {
+    let b = n.to_le_bytes();
+    u128::from_le_bytes([
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+        0u8,  0u8,  0u8,  0u8,  0u8,  0u8,  0u8,  0u8,
+        ])
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]

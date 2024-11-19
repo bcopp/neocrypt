@@ -30,11 +30,11 @@ type Seq = u64;
 
 fn park_sender<T>(sender: Sender<T>) { while ! sender.is_empty() {} }
 
-fn spawn_reader(mut packer_r: BufReader<File>, sender: Sender<Vec<u8>>) -> JoinHandle<()> {
+fn spawn_reader(mut packer_r: StreamBufReader, sender: Sender<Vec<u8>>) -> JoinHandle<()> {
     spawn(move || {
 
         loop {
-            let mut buf = vec![0u8; DEFAULT_SIZE]; // 4MB
+            let mut buf = vec![0u8; DEFAULT_SIZE];
             let len = buf.len();
 
             let flag = read_until(&mut packer_r, &mut buf, len).unwrap();
@@ -131,31 +131,17 @@ fn spawn_decrypt<T>(ctx: &Ctx, receiver: Receiver<T>, sender: Sender<T>) -> Join
     let ctx = ctx.clone();
     spawn(move || {
 
-        if ctx.testing_only_disable_decrypter_threads {
-            receiver
-                .iter()
-                //.par_bridge()
-                .for_each(|frame| {
+    receiver
+        .iter()
+        .par_bridge()
+        .for_each(|frame| {
 
-                let f = frame.unzip_decrypt(&ctx);
-                match sender.send(f) {
-                    Ok(()) => {},
-                    Err(e) => {panic!("error: sender error during decrypt: {:?}", e);}
-                }
-            });
-        } else {
-            receiver
-                .iter()
-                .par_bridge()
-                .for_each(|frame| {
-
-                let f = frame.unzip_decrypt(&ctx);
-                match sender.send(f) {
-                    Ok(()) => {},
-                    Err(e) => {panic!("error: sender error during decrypt: {:?}", e);}
-                }
-            });
+        let f = frame.unzip_decrypt(&ctx);
+        match sender.send(f) {
+            Ok(()) => {},
+            Err(e) => {panic!("error: sender error during decrypt: {:?}", e);}
         }
+    });
 
         // park_sender(sender);
         debug!("channel closed: decrypter")
@@ -229,7 +215,7 @@ fn spawn_order_by_seq<T>(receiver: Receiver<T>, sender: Sender<T>) -> JoinHandle
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{io::{Read, Write}, sync::{Arc, Mutex}};
+    use std::{fs::OpenOptions, io::{Read, Write}, sync::{Arc, Mutex}, time::Instant};
     use crossbeam::thread;
     use crossbeam_channel::{bounded, unbounded};
     use log::debug;
@@ -248,7 +234,7 @@ mod tests {
             .logger();
 
         let src= PathBuf::from("/home/cflex/Dropbox/code2/bastion-mount/dummy_data");
-        let (trg, trg_name)= new_tmp_dir();
+        let (trg, _)= new_tmp_dir();
 
         let (s, r) = unbounded();
 
@@ -265,15 +251,58 @@ mod tests {
         // assert_eq!(get_folder_md5(&src), get_folder_md5(&trg)) // takes too long
     }
 
+    /* EXPERIMENTAL
+
     #[test]
-    fn test_encrypt_decrypt() {
+    fn test_encrypt() {
         let t = TestInit::new()
             .storage()
             .logger();
 
-        let mut ctx = t.get_ctx();
-        ctx.testing_only_disable_decrypter_threads = true; // Disable dual threadpools due to channel bug
-        let ctx = &ctx;
+        let ctx = &t.get_ctx();
+
+        let size = t.get_channel_size();
+
+        debug!("data generation finished");
+
+        let (s_packer, r_packer) = bounded(size);
+        let (s_order_by_seq, r_order_by_seq) = bounded::<FrameV1>(size);
+        let (s_writer, r_writer) = bounded(size);
+
+        debug!("encrypt decrypt: spawn packer");
+        //let f = PathBuf::from("/home/cflex/Dropbox/Movies");
+        let f = PathBuf::from("/home/cflex/Dropbox/Movies/Akira-1988-2160p-4K-BluRay-5.1-YTS.MX");
+        let sw = StreamBufWriter::new(s_packer);
+        let reader_t = spawn_packer(&f, sw);
+
+        debug!("encrypt decrypt: spawn encrypter");
+        let encrypter_t = spawn_encrypt(ctx, r_packer, s_order_by_seq);
+
+        debug!("encrypt decrypt: spawn order by");
+        let order_by_seq = spawn_order_by_seq(r_order_by_seq, s_writer);
+
+        debug!("encrypt decrypt: writer");
+        let writer_t = spawn(move ||{
+            r_writer.iter().for_each(|frame| {let i = 1;});
+            debug!("encrypt decrypt: channel closed writer");
+        });
+
+        debug!("encrypt decrypt: now encrypting...");
+
+        writer_t.join().unwrap();
+        encrypter_t.join().unwrap();
+        order_by_seq.join().unwrap();
+        reader_t.join().unwrap();
+    }
+    */
+
+    #[test]
+    fn test_d_encrypt_decrypt() {
+        let t = TestInit::new()
+            .storage()
+            .logger();
+
+        let ctx = &t.get_ctx();
 
         let size = t.get_channel_size();
 
@@ -298,27 +327,21 @@ mod tests {
             debug!("encrypt decrypt: splitting data of len {} bytes into {} separate channel message", data.len(), msgs.len());
 
             let m_msgs = Arc::new(Mutex::new(msgs));
-            let m_processed = Arc::new(Mutex::new(vec![]));
+            let m_encrypted = Arc::new(Mutex::new(vec![]));
+            let m_decrypted = Arc::new(Mutex::new(vec![]));
 
             let m_msgs_cpy = m_msgs.clone();
-            let m_processed_cpy = m_processed.clone();
+            let m_encrypted_cpy1 = m_encrypted.clone();
+            let m_encrypted_cpy2 = m_encrypted.clone();
+            let m_decrypted_cpy = m_decrypted.clone();
 
             let (s_reader, r_reader) = bounded(size);
-            let (s_order_by_seq, r_order_by_seq) = bounded::<FrameV1>(size);
-            let (s_decrypter, r_decrypter) = bounded::<FrameV1>(size);
             let (s_writer, r_writer) = bounded(size);
 
-            debug!("encrypt decrypt: spawn encrypter");
-            let encrypter_t = spawn_encrypt(ctx, r_reader, s_decrypter);
 
-            debug!("encrypt decrypt: spawn decrypter");
-            let decrypter_t = spawn_decrypt(ctx, r_decrypter, s_order_by_seq);
+            // --- encrypter ---
+            // reader -> encrypter -> write -> Vec<_>
 
-            debug!("encrypt decrypt: spawn order by");
-            let order_by_seq = spawn_order_by_seq(r_order_by_seq, s_writer);
-
-
-            // writes out all buffers
             let reader_t = spawn(move ||{
                 debug!("encrypt decrypt: spawn reader in");
                 let msgs = &m_msgs_cpy.lock().unwrap();
@@ -327,33 +350,77 @@ mod tests {
                     s_reader.send((usize_u64(seq), bytes.clone())).unwrap();
                 });
 
-                // park_sender(s_reader);
                 debug!("encrypt decrypt: channel closed: reader")
             });
 
+            debug!("encrypt decrypt: spawn encrypter");
+            let encrypter_t = spawn_encrypt::<FrameV1>(
+                ctx,
+                r_reader,
+                s_writer
+            );
 
             let writer_t = spawn(move ||{
                 debug!("encrypt decrypt: spawn writer out");
-                let mut processed = m_processed_cpy.lock().unwrap();
+                let mut encrypted = m_encrypted_cpy1.lock().unwrap();
 
                 r_writer.iter().for_each(|frame|{
-                    processed.extend(frame.buf);
+                    encrypted.push(frame);
                 });
                 debug!("encrypt decrypt: channel closed: writer")
             });
 
+
             writer_t.join().unwrap();
-            decrypter_t.join().unwrap();
             encrypter_t.join().unwrap();
-            order_by_seq.join().unwrap();
             reader_t.join().unwrap();
 
+
+            // --- decrypter ---
+            // Vec<_> -> reader -> decrypter -> order by -> writer
+
+            let (s_reader, r_reader) = bounded(size);
+            let (s_decrypter, r_decrypter) = bounded::<FrameV1>(size);
+            let (s_order_by_seq, r_order_by_seq) = bounded::<FrameV1>(size);
+            let (s_writer, r_writer) = bounded(size);
+
+            let reader_t = spawn(move ||{
+                let encrypted = &m_encrypted_cpy2.lock().unwrap();
+
+                encrypted.iter().for_each(|frame| {
+                    s_reader.send(frame.clone()).unwrap();
+                });
+
+                // park_sender(s_reader);
+                debug!("encrypt decrypt: channel closed: reader")
+            });
+
+            let decrypter_t = spawn_decrypt::<FrameV1>(ctx, r_reader, s_order_by_seq);
+            let order_by_t = spawn_order_by_seq::<FrameV1>(r_order_by_seq, s_writer);
+
+            let writer_t = spawn(move ||{
+                debug!("encrypt decrypt: spawn writer out");
+                let mut decryped = m_decrypted_cpy.lock().unwrap();
+
+                r_writer.iter().for_each(|frame|{
+                    decryped.extend(frame.buf);
+                });
+                debug!("encrypt decrypt: channel closed: writer")
+            });
+
+            reader_t.join().unwrap();
+            decrypter_t.join().unwrap();
+            order_by_t.join().unwrap();
+            writer_t.join().unwrap();
+
+            // --- verify ---
+            // data == Vec<_>
             {
-                let processed = m_processed.lock().unwrap();
+                let decrypted = m_decrypted.lock().unwrap();
 
-                assert_eq!(processed.len(), data.len());
+                assert_eq!(decrypted.len(), data.len());
 
-                for (i, (pd, d)) in itertools::enumerate(itertools::zip_eq(processed.to_vec(), data)){
+                for (i, (pd, d)) in itertools::enumerate(itertools::zip_eq(decrypted.to_vec(), data)){
                     if pd != d {
                         debug!("at index {}", i);
                     }

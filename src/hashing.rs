@@ -273,28 +273,3 @@ fn xdhashbash(pwd: &str) -> u64 {
 mod tests {
     use super::*;
 }
-
-/*
-        // 24 byte; unique per message
-        let deciphertext = cipher.decrypt(
-            &frame.nonce.unwrap(),
-            frame.buf.as_ref()
-        ).unwrap();
-
-
-
-        let nonce = hashing::generate_nonce();
-
-        let ciphertext = cipher.encrypt(
-            &nonce,
-            buf
-            .as_ref()
-        ).unwrap();
-
-        println!("CIPHER TEXT SIZE {}", ciphertext.len());
-        println!("CIPHER 1st 24 {:?}", ciphertext[ciphertext.len()-24..ciphertext.len()].to_vec());
-        println!("CIPHER NONCE {:?}", nonce.to_vec());
-
-        // TODO: Optimization: ciphertext.as_ref() 
-        let mut buf = [0u8; BUF_CAPACITY_BYTES].to_vec();
- */

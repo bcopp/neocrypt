@@ -6,15 +6,17 @@ use crate::common::*;
 
 
 pub struct StreamBufWriter {
-    pub s: Sender<Vec<u8>>,
+    pub s: Sender<(u64, Vec<u8>)>,
     pub buf: Vec<u8>,
+    pub seq: u64,
 }
 
 impl StreamBufWriter {
-    pub fn new(sender: Sender<Vec<u8>>) -> Self {
+    pub fn new(sender: Sender<(u64, Vec<u8>)>) -> Self {
         StreamBufWriter{
             s: sender,
             buf: vec![],
+            seq: 0,
         }
     }
 }
@@ -27,8 +29,8 @@ impl Write for StreamBufWriter {
 
         if self.buf.len() > DEFAULT_SIZE {
 
-            match self.s.send(self.buf.clone()) {
-                Ok(()) => {},
+            match self.s.send((self.seq, self.buf.clone())) {
+                Ok(()) => {self.seq += 1},
                 Err(e) => {trace!("error: streambufwriter send {:?}", e)}
             }
             self.buf = vec![];
@@ -41,8 +43,8 @@ impl Write for StreamBufWriter {
     fn flush(&mut self) -> io::Result<()> {
 
         if ! self.buf.is_empty() {
-            match self.s.send(self.buf.clone()) {
-                Ok(()) => {self.buf = vec![]},
+            match self.s.send((self.seq, self.buf.clone())) {
+                Ok(()) => {self.buf = vec![]; self.seq += 1},
                 Err(e) => {trace!("error: streambufwriter send, internal buf len {:?}, {:?}", self.buf.len(), e)},
             }
         }
@@ -62,12 +64,12 @@ impl Drop for StreamBufWriter{
 
 
 pub struct StreamBufReader{
-    r: Receiver<Vec<u8>>,
+    r: Receiver<(u64, Vec<u8>)>,
     buf: Vec<u8>,
 }
 
 impl StreamBufReader{
-    pub fn new(receiver: Receiver<Vec<u8>>) -> Self {
+    pub fn new(receiver: Receiver<(u64, Vec<u8>)>) -> Self {
 
         StreamBufReader{
             r: receiver,
@@ -89,7 +91,7 @@ impl Read for StreamBufReader {
             // refresh internal buffer
             if self.buf.is_empty() {
                 match self.r.recv() {
-                    Ok(buf) => {self.buf = buf},
+                    Ok((_, buf)) => {self.buf = buf},
                     Err(_) => {return Ok(bytes_read);},
                 }
             }
