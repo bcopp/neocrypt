@@ -146,7 +146,7 @@ mod tests {
             .storage()
             .logger();
 
-        let mut datas = [
+        let datas = [
             rand_vec(0..1),
             rand_vec(0..256),
             rand_vec(0..DEFAULT_SIZE),

@@ -1,4 +1,4 @@
-use std::{fs::{create_dir_all, OpenOptions}, io::{self, BufReader, Cursor, Read}, ops::Range, os::unix::fs::MetadataExt, path::PathBuf, str::FromStr};
+use std::{fs::{create_dir_all, OpenOptions}, io::{self, BufReader, Cursor, Read}, ops::Range, os::unix::fs::MetadataExt, path::PathBuf, str::FromStr, sync::Mutex};
 use dirs::home_dir;
 use flate2::{bufread::{GzDecoder, GzEncoder}, Compression};
 use itertools::join;
@@ -780,9 +780,17 @@ impl TestInit {
 
 }
 
+
+static IS_LOGGER_INIT: Mutex<bool> = std::sync::Mutex::new(false);
+
 fn init_logger() -> Result<(), Box<dyn std::error::Error>>{
-    // Configure logger at runtime
-    fern::Dispatch::new()
+    let mut is_logger_init = IS_LOGGER_INIT.lock().unwrap();
+
+    if *is_logger_init {}
+    else {
+        *is_logger_init = true;
+        // Configure logger at runtime
+        fern::Dispatch::new()
         // Perform allocation-free log formatting
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -799,7 +807,10 @@ fn init_logger() -> Result<(), Box<dyn std::error::Error>>{
         .chain(std::io::stdout())
         .chain(fern::log_file("output.log")?)
         // Apply globally
-        .apply();
+        .apply()
+        .unwrap();
+    }
+    
     Ok(())
 }
 

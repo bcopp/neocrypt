@@ -30,31 +30,6 @@ type Seq = u64;
 
 fn park_sender<T>(sender: Sender<T>) { while ! sender.is_empty() {} }
 
-fn spawn_reader(mut packer_r: StreamBufReader, sender: Sender<Vec<u8>>) -> JoinHandle<()> {
-    spawn(move || {
-
-        loop {
-            let mut buf = vec![0u8; DEFAULT_SIZE];
-            let len = buf.len();
-
-            let flag = read_until(&mut packer_r, &mut buf, len).unwrap();
-
-            let b = match flag {
-                (_, IOFlag::EOF) => break,
-                (b, IOFlag::PartialRead) => b,
-                (b, IOFlag::ReadExact) => b,
-            };
-
-            let result = sender.send(buf[..b].to_vec());
-
-            if result.is_err() {
-                panic!("{:?}", result);
-            }
-        }
-
-        park_sender(sender);
-    })
-}
 
 fn spawn_reader_decrypt<T>(mut r: BufReader<File>, sender: Sender<T>) -> JoinHandle<()> 
     where
@@ -226,14 +201,14 @@ mod tests {
     use crate::common::{get_linux_context, new_tmp_dir};
 
 
+
     #[test]
-    #[ignore]
     fn test_packer_unpacker() {
         let t = &TestInit::new()
             .storage()
             .logger();
 
-        let src= PathBuf::from("/home/cflex/Dropbox/code2/bastion-mount/dummy_data");
+        let src= env::current_dir().unwrap().join("dummy_data");
         let (trg, _)= new_tmp_dir();
 
         let (s, r) = unbounded();
@@ -251,62 +226,16 @@ mod tests {
         // assert_eq!(get_folder_md5(&src), get_folder_md5(&trg)) // takes too long
     }
 
-    /* EXPERIMENTAL
-
     #[test]
-    fn test_encrypt() {
+    fn test_encrypt_decrypt() {
         let t = TestInit::new()
             .storage()
             .logger();
 
         let ctx = &t.get_ctx();
-
         let size = t.get_channel_size();
 
-        debug!("data generation finished");
-
-        let (s_packer, r_packer) = bounded(size);
-        let (s_order_by_seq, r_order_by_seq) = bounded::<FrameV1>(size);
-        let (s_writer, r_writer) = bounded(size);
-
-        debug!("encrypt decrypt: spawn packer");
-        //let f = PathBuf::from("/home/cflex/Dropbox/Movies");
-        let f = PathBuf::from("/home/cflex/Dropbox/Movies/Akira-1988-2160p-4K-BluRay-5.1-YTS.MX");
-        let sw = StreamBufWriter::new(s_packer);
-        let reader_t = spawn_packer(&f, sw);
-
-        debug!("encrypt decrypt: spawn encrypter");
-        let encrypter_t = spawn_encrypt(ctx, r_packer, s_order_by_seq);
-
-        debug!("encrypt decrypt: spawn order by");
-        let order_by_seq = spawn_order_by_seq(r_order_by_seq, s_writer);
-
-        debug!("encrypt decrypt: writer");
-        let writer_t = spawn(move ||{
-            r_writer.iter().for_each(|frame| {let i = 1;});
-            debug!("encrypt decrypt: channel closed writer");
-        });
-
-        debug!("encrypt decrypt: now encrypting...");
-
-        writer_t.join().unwrap();
-        encrypter_t.join().unwrap();
-        order_by_seq.join().unwrap();
-        reader_t.join().unwrap();
-    }
-    */
-
-    #[test]
-    fn test_d_encrypt_decrypt() {
-        let t = TestInit::new()
-            .storage()
-            .logger();
-
-        let ctx = &t.get_ctx();
-
-        let size = t.get_channel_size();
-
-        let mut datas = [
+        let datas = [
             rand_vec(0..1),
             rand_vec(0..256),
             rand_vec(0..DEFAULT_SIZE),
@@ -320,7 +249,6 @@ mod tests {
         let data_msgs: Vec<Vec<Vec<u8>>> = datas.iter().map(|d| {split_data(d)}).collect();
 
         debug!("data generation finished");
-
 
         for (msgs, data) in itertools::zip_eq(data_msgs, datas) {
             debug!("encrypt decrypt: processing data of len {} bytes", data.len());
@@ -380,7 +308,6 @@ mod tests {
             // Vec<_> -> reader -> decrypter -> order by -> writer
 
             let (s_reader, r_reader) = bounded(size);
-            let (s_decrypter, r_decrypter) = bounded::<FrameV1>(size);
             let (s_order_by_seq, r_order_by_seq) = bounded::<FrameV1>(size);
             let (s_writer, r_writer) = bounded(size);
 
