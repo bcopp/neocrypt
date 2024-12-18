@@ -1,4 +1,4 @@
-use std::{fs::{create_dir_all, OpenOptions}, io::{self, BufReader, Cursor, Read}, ops::Range, os::unix::fs::MetadataExt, path::PathBuf, str::FromStr, sync::Mutex};
+use std::{fs::{create_dir_all, remove_dir_all, OpenOptions}, io::{self, BufReader, Cursor, Read}, ops::Range, os::unix::fs::MetadataExt, path::PathBuf, str::FromStr, sync::Mutex};
 use dirs::home_dir;
 use flate2::{bufread::{GzDecoder, GzEncoder}, Compression};
 use itertools::join;
@@ -10,6 +10,8 @@ use rand::{thread_rng, Rng};
 use chacha20poly1305::XNonce;
 use chacha20poly1305::aead::Aead;
 
+use chrono::DateTime;
+use chrono::Utc;
 
 pub const KB: usize = 1000;
 pub const MB: usize = 1000 * KB;
@@ -17,14 +19,17 @@ pub const GB: usize = 1000 * MB;
 
 pub const DEFAULT_SIZE: usize = 8 * KB;
 
-const ENCRYPTION_ALG_NULL: u16 = 0;
-const ENCRYPTION_ALG_TESTING_ONLY_NONE: u16 = 1;
-const ENCRYPTION_ALG_CHACHPOLY20: u16 = 2;
+pub const VERSION_NULL: u16 = 0;
+pub const VERSION_1: u16 = 1;
 
-const COMPRESSION_ALG_NULL: u16 = 0;
-const COMPRESSION_ALG_NONE: u16 = 1;
-const COMPRESSION_ALG_GZIP: u16 = 2;
-const COMPRESSION_ALG_BLOSC: u16 = 3;
+pub const ENCRYPTION_ALG_NULL: u16 = 0;
+pub const ENCRYPTION_ALG_TESTING_ONLY_NONE: u16 = 1;
+pub const ENCRYPTION_ALG_CHACHPOLY20: u16 = 2;
+
+pub const COMPRESSION_ALG_NULL: u16 = 0;
+pub const COMPRESSION_ALG_NONE: u16 = 1;
+pub const COMPRESSION_ALG_GZIP: u16 = 2;
+pub const COMPRESSION_ALG_BLOSC: u16 = 3;
 
 type IsEmpty = bool;
 
@@ -41,10 +46,17 @@ type IsEmpty = bool;
     --no-mount
         encrypt files and do not mount
  */
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum OSType{
+    Null = 0,
+    Linux = 1,
+    MacOS = 2,
+    Unsupported = 3,
+}
 
 #[derive(Clone)]
 pub struct Ctx{
-    pub is_linux: bool,
+    pub os: OSType,
     pub storage: StorageDirs,
 
     pub pwd: PasswordHashString,
@@ -62,12 +74,6 @@ pub struct StorageDirs{
     pub mount_to: PathBuf,
 }
 
-// initializes storage directories
-pub fn init_storage(ctx: &Ctx) {
-    create_dir_all(&ctx.storage.home).unwrap();
-    create_dir_all(&ctx.storage.mount_from).unwrap();
-    create_dir_all(&ctx.storage.mount_to).unwrap(); // TODO Eject Permissions
-}
 
 // field order is ser & deser order
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -91,6 +97,10 @@ pub struct FrameV1{
 
 pub trait SetBuf {
     fn set_buf(self, buf: Vec<u8>);
+}
+
+pub trait GetBuf {
+    fn get_buf(&self) -> Vec<u8>;
 }
 
 pub trait Sequenced {
@@ -151,6 +161,12 @@ impl Deserialize for HeaderV1 {
 }
 
 unsafe impl Send for FrameV1 {}
+
+impl GetBuf for FrameV1 {
+    fn get_buf(&self) -> Vec<u8>{
+        return self.buf.clone();
+    }
+}
 
 impl SetBuf for FrameV1 {
     fn set_buf(mut self, buf: Vec<u8>) {
@@ -269,52 +285,79 @@ impl Deserialize for FrameV1 {
 
 impl ZipCrypt for FrameV1 {
 
-    fn unzip_decrypt(&self, ctx: &Ctx) -> Self {
-        let mut processed = vec![];
+    fn unzip_decrypt(&self, ctx: &Ctx) -> Self {     
 
-        let mut reader: Box<dyn Read> = match self.compression_alg {
-            COMPRESSION_ALG_NULL => {
-                panic!{"compression type not set {}", self.compression_alg}
+        let processed = match self.encryption_alg {
+            ENCRYPTION_ALG_NULL => panic!("encryption alg not set"),
+            ENCRYPTION_ALG_TESTING_ONLY_NONE => {
+
+                // decompress only
+                let mut reader: Box<dyn Read> = match self.compression_alg {
+                    COMPRESSION_ALG_NULL => {
+                        panic!{"compression type not set {}", self.compression_alg}
+                    }
+                    COMPRESSION_ALG_NONE => {
+                        Box::new(
+                            BufReader::new(Cursor::new(&self.buf))
+                        )
+                    }
+                    COMPRESSION_ALG_GZIP => {
+                        Box::new(
+                            GzDecoder::new(self.buf.as_ref())
+                        )
+                    }
+                    COMPRESSION_ALG_BLOSC => {
+                        panic!{"BLOSC not implemented"}
+                    }
+                    _ => {
+                        panic!{"compression type not implemented {}", self.compression_alg}
+                    }
+                };   
+
+                let mut decompressed = vec![];
+                reader.read_to_end(&mut decompressed).unwrap();
+
+                decompressed
             }
-            COMPRESSION_ALG_NONE => {
-                Box::new(
-                    BufReader::new(Cursor::new(&self.buf))
-                )
+            ENCRYPTION_ALG_CHACHPOLY20 => {
+
+                // de-encrypt first
+                let cipher = crate::hashing::generate_cipher(&ctx.pwd);
+                let deciphertext = cipher.decrypt(
+                    &self.nonce,
+                    self.buf.as_ref(),
+                ).unwrap();
+
+                // de-compress second
+                let mut reader: Box<dyn Read> = match self.compression_alg {
+                    COMPRESSION_ALG_NULL => {
+                        panic!{"compression type not set {}", self.compression_alg}
+                    }
+                    COMPRESSION_ALG_NONE => {
+                        Box::new(
+                            BufReader::new(Cursor::new(&deciphertext))
+                        )
+                    }
+                    COMPRESSION_ALG_GZIP => {
+                        Box::new(
+                            GzDecoder::new(deciphertext.as_ref())
+                        )
+                    }
+                    COMPRESSION_ALG_BLOSC => {
+                        panic!{"BLOSC not implemented"}
+                    }
+                    _ => {
+                        panic!{"compression type not implemented {}", self.compression_alg}
+                    }
+                };   
+
+                let mut decompressed = vec![];
+                reader.read_to_end(&mut decompressed).unwrap();
+                
+                decompressed
             }
-            COMPRESSION_ALG_GZIP => {
-                Box::new(
-                    GzDecoder::new(self.buf.as_ref())
-                )
-            }
-            COMPRESSION_ALG_BLOSC => {
-                panic!{"BLOSC not implemented"}
-            }
-            _ => {
-                panic!{"compression type not implemented {}", self.compression_alg}
-            }
+            _ => {panic!("encryption alg not supported {}", self.encryption_alg);}
         };
-
-        let cipher = crate::hashing::generate_cipher(&ctx.pwd);
-
-        if self.encryption_alg == ENCRYPTION_ALG_NULL {
-            panic!("encryption alg not set");
-        } else if self.encryption_alg == ENCRYPTION_ALG_TESTING_ONLY_NONE {
-            let mut data = vec![];
-            reader.read_to_end(&mut data).unwrap();
-
-            processed = data
-        } else if self.encryption_alg == ENCRYPTION_ALG_CHACHPOLY20 {
-
-            // 24 byte; unique per message
-            let deciphertext = cipher.decrypt(
-                &self.nonce,
-                self.buf.as_ref()
-            ).unwrap();
-
-            processed = deciphertext
-        } else {
-            panic!("encryption alg not supported {}", self.encryption_alg);
-        }
 
         FrameV1{
             seq: self.seq,
@@ -353,107 +396,57 @@ impl ZipCrypt for FrameV1 {
         };
 
 
-        if ctx.encryption_alg == ENCRYPTION_ALG_NULL {
-            panic!("encryption alg not set");
-        } else if ctx.encryption_alg == ENCRYPTION_ALG_TESTING_ONLY_NONE {
-            let mut f_buf = vec![];
-            reader.read_to_end(&mut f_buf).unwrap();
+        let frame = match ctx.encryption_alg {
+            ENCRYPTION_ALG_NULL => panic!("encryption alg not set"),
+            ENCRYPTION_ALG_TESTING_ONLY_NONE => {
+                
+                // compress only
+                let mut compressed = vec![];
+                reader.read_to_end(&mut compressed).unwrap();
+    
+                FrameV1{
+                    seq:seq,
+    
+                    encryption_alg: ctx.encryption_alg,
+                    compression_alg: ctx.compression_alg,
+                    nonce: *XNonce::from_slice(&[1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1]),
+                    buf_len: usize_u32(compressed.len()),
+                    buf: compressed,
+                }
+            },
+            ENCRYPTION_ALG_CHACHPOLY20 => {
 
-            FrameV1{
-                seq:seq,
+                // compress first
+                let mut compressed = vec![];
+                reader.read_to_end(&mut compressed).unwrap();
 
-                encryption_alg: ctx.encryption_alg,
-                compression_alg: ctx.compression_alg,
-                nonce: *XNonce::from_slice(&[1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1]),
-                buf_len: usize_u32(f_buf.len()),
-                buf: f_buf,
+                // encrypt second
+                let cipher = crate::hashing::generate_cipher(&ctx.pwd);
+                let nonce = crate::hashing::generate_nonce();
+                let ciphertext = cipher.encrypt(
+                    &nonce,
+                    compressed.as_ref(),
+                ).unwrap();
+    
+                FrameV1 {
+                    seq:seq,
+    
+                    encryption_alg: ctx.encryption_alg,
+                    compression_alg: ctx.compression_alg,
+                    nonce: nonce,
+                    buf_len: usize_u32(ciphertext.len()),
+                    buf: ciphertext,
+                }
             }
-        } else if ctx.encryption_alg == ENCRYPTION_ALG_CHACHPOLY20 {
-            // 24-nonce,bytes; unique per message
+            _ => {panic!("encryption alg not supported {}", ctx.encryption_alg);}
+        };
 
-            let cipher = crate::hashing::generate_cipher(&ctx.pwd);
-            let nonce = crate::hashing::generate_nonce();
-
-
-            let ciphertext = cipher.encrypt(
-                &nonce,
-                buf
-                .as_ref()
-            ).unwrap();
-
-
-            let mut f_buf = vec![];
-            reader.read_to_end(&mut f_buf).unwrap();
-
-            FrameV1{
-                seq:seq,
-
-                encryption_alg: ctx.encryption_alg,
-                compression_alg: ctx.compression_alg,
-                nonce: nonce,
-                buf_len: usize_u32(ciphertext.len()),
-                buf: ciphertext,
-            }
-
-        } else {
-            panic!("encryption alg not supported {}", ctx.encryption_alg);
-        }
-    }
-}
-
-const PWD: &str = "V7Pvxzhhw9gLWV3k";
-const PWD_RAW: &str = "$scrypt$ln=17,r=8,p=1$AeWF6c7Pdso2YZy4PfMs+g$YyBx8qB2Hv3pOJSKbR/vRzGRL8i/ZIeuCTtt/GuW5Hto2mHs8vz0brNyHzmqXvcfk03ZymcMgKtVkUk9tpEx6w";
-
-pub fn get_linux_context() -> Ctx {
-    let home = home_dir().unwrap();
-    let home = home.join(".bastion_test");
-    let mount_from = home.join("mount_from");
-    let mount_to = home.join("mount_to");
-
-    let pwd = String::from(PWD);
-    let pwd_hash_str = password_hash::PasswordHashString::from_str(PWD_RAW).unwrap();
-
-
-    Ctx {
-        is_linux: true,
-        storage: StorageDirs{
-            home: home,
-            mount_from: mount_from,
-            mount_to: mount_to,
-        },
-
-        pwd: pwd_hash_str,
-        name: new_uid(8),
-
-        close_all: false,
-        
-        compression_alg: COMPRESSION_ALG_NONE,
-        // compression_alg: COMPRESSION_ALG_GZIP,
-        //encryption_alg: ENCRYPTION_ALG_TESTING_ONLY_NONE,
-        encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
+        frame
     }
 }
 
 
-use chrono::DateTime;
-use chrono::Utc;
 
-pub fn new_tmp_dir() -> (PathBuf, String) {
-    let ctx = &get_linux_context();
-
-    let now: DateTime<Utc> = Utc::now();
-    let mut name: String = now.to_rfc3339();
-    name.push_str("_");
-    name.push_str(&new_uid(8));
-
-    let tmp = ctx.storage.home.join(name.clone());
-    create_dir_all(&tmp).unwrap();
-
-    return (
-        tmp,
-        name,
-    );
-}
 
 pub fn bytes_fmt(n: usize) -> String {
     if n > GB {
@@ -571,13 +564,6 @@ pub fn read_until<R: Read>(r: &mut R, buf: &mut Vec<u8>, buf_size: usize) -> Res
 
         let mut b = 0;
 
-        /*
-        if { buf.subslice_range(t..buf_size)} == None {
-            return Err(
-                std::io::Error::new(io::ErrorKind::BrokenPipe, format!("size out of range {}", buf_size)
-            ));
-        };
-        */
 
         if buf_size == 0{
             b = r.read(&mut buf[t..])?;
@@ -621,7 +607,7 @@ pub fn get_folder_md5(src: &PathBuf) -> String
     itertools::join(md5s, "")
 }
 
-pub fn get_file_sizes(src: &PathBuf) -> String {
+pub fn get_folder_size(src: &PathBuf) -> String {
 
     let mut paths = vec![];
 
@@ -718,54 +704,77 @@ pub fn split_data(data: &Vec<u8>) -> Vec<Vec<u8>> {
 }
 
 
-
-pub struct Init{
-    ctx: Ctx,
+pub struct PathCleanup{
+    path: PathBuf,
 }
 
-impl Init {
+impl PathCleanup {
+    pub fn new(path: PathBuf) -> Self {
+        return PathCleanup{path: path}
+    }
+}
 
-    pub fn new() -> Self {
-        Init{
-            ctx: get_linux_context(),
+// Strict! Only cleanup paths that start with /tmp
+impl Drop for PathCleanup{
+    fn drop(&mut self) {
+
+        /*
+        let TMP_PATH = PathBuf::new().join("tmp");
+
+        let tmp = self.path.clone();
+        if tmp.starts_with(TMP_PATH){
+            match std::fs::remove_dir_all(tmp){
+                Ok(()) => {},
+                Err(e) => {debug!("error: could not cleanup {:?}", &self.path)}
+            }
         }
+         */
     }
-
-    pub fn storage(self) -> Self {
-        init_storage(&self.ctx);
-        self
-    }
-
-    pub fn logger(self) -> Self {
-        init_logger().unwrap();
-        self
-    }
-
-    pub fn get_ctx(self) -> Ctx {
-        return self.ctx.clone();
-    }
-
-
 }
 
 pub struct TestInit {
     ctx: Ctx,
+    uid: String,
+    tmp: PathBuf,
+    tmp_cleanup: PathCleanup,
+    storage_cleanup: Option<PathCleanup>,
 }
 
 impl TestInit {
 
     pub fn new() -> Self {
+        let now: DateTime<Utc> = Utc::now();
+        let mut uid: String = now.to_rfc3339();
+        uid.push_str("_");
+        uid.push_str(&new_uid(8));
+
+        let tmp = PathBuf::new().join("tmp").join(uid.clone());
+
+        let tmp_cleanup = PathCleanup::new(tmp.clone());
+
+        create_dir_all(&tmp).unwrap();
+
+        let ctx = Self::new_ctx(&tmp);
+
         TestInit{
-            ctx: get_linux_context(),
+            ctx: ctx,
+            uid: uid,
+            tmp: tmp,
+            tmp_cleanup: tmp_cleanup,
+            storage_cleanup: None,
         }
     }
 
-    pub fn storage(self) -> Self {
-        init_storage(&self.ctx);
-        self
+    pub fn with_storage(mut self) -> Self {
+        // initializes storage directories
+        create_dir_all(&self.ctx.storage.home).unwrap();
+        create_dir_all(&self.ctx.storage.mount_from).unwrap();
+        create_dir_all(&self.ctx.storage.mount_to).unwrap();
+
+        return self
     }
 
-    pub fn logger(self) -> Self {
+    pub fn with_logger(self) -> Self {
         init_logger().unwrap();
         self
     }
@@ -778,16 +787,58 @@ impl TestInit {
         return num_cpus::get() * 2;
     }
 
+    pub fn new_tmp_path(&self) -> PathBuf {
+        return PathBuf::from(self.tmp.clone()).join(new_uid(8));
+    }
+    
+    fn new_ctx(root: &PathBuf) -> Ctx {
+        const PWD: &str = "V7Pvxzhhw9gLWV3k";
+        const PWD_RAW: &str = "$scrypt$ln=17,r=8,p=1$AeWF6c7Pdso2YZy4PfMs+g$YyBx8qB2Hv3pOJSKbR/vRzGRL8i/ZIeuCTtt/GuW5Hto2mHs8vz0brNyHzmqXvcfk03ZymcMgKtVkUk9tpEx6w";
+
+        let home = root.join(".bastion_test");
+        let mount_from = home.join("mount_from");
+        let mount_to = home.join("mount_to");
+
+        let pwd_hash_str = password_hash::PasswordHashString::from_str(PWD_RAW).unwrap();
+        debug!("SALT::{}", pwd_hash_str.salt().unwrap().as_str());
+
+        let os = match std::env::consts::OS {
+            "linux" => OSType::Linux,
+            "macos" => OSType::MacOS,
+            _ => OSType::Unsupported
+        };
+
+        if os == OSType::Unsupported {
+            panic!("error: unsupported os {}", std::env::consts::OS);
+        }
+        
+
+        Ctx {
+            os: os,
+            storage: StorageDirs{
+                home: home,
+                mount_from: mount_from,
+                mount_to: mount_to,
+            },
+
+            pwd: pwd_hash_str,
+            name: new_uid(8),
+
+            close_all: false,
+            
+            compression_alg: COMPRESSION_ALG_NONE,
+            // compression_alg: COMPRESSION_ALG_GZIP,
+            // encryption_alg: ENCRYPTION_ALG_TESTING_ONLY_NONE,
+            encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
+        }
+    }
 }
 
-
 static IS_LOGGER_INIT: Mutex<bool> = std::sync::Mutex::new(false);
-
 fn init_logger() -> Result<(), Box<dyn std::error::Error>>{
     let mut is_logger_init = IS_LOGGER_INIT.lock().unwrap();
 
-    if *is_logger_init {}
-    else {
+    if ! *is_logger_init {
         *is_logger_init = true;
         // Configure logger at runtime
         fern::Dispatch::new()
@@ -823,14 +874,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_serialize_deserialize(){
+    fn test_serialize_deserialize_header_v1(){
         let t = TestInit::new()
-            .storage()
-            .logger();
+        .with_storage()
+        .with_logger();
+
+        let ctx = &t.get_ctx();
 
         let h = HeaderV1{
             version: 1,
-            salt: new_uid(22), // 22 byte string
+            salt: String::from(ctx.pwd.salt().unwrap().as_str()), // 22 byte string
         };
 
         let h_ser = h.serialize();
@@ -842,53 +895,107 @@ mod tests {
         assert_eq!(is_empty, false);
         assert_eq!(h.version, h_de.version);
         assert_eq!(h.salt, h_de.salt);
+    }
 
+    #[test]
+    fn test_serialize_deserialize_frame_v1(){
+        let t = TestInit::new()
+            .with_storage()
+            .with_logger();
+
+        let f = new_frame(256);
+
+        let f_ser = f.serialize();
+        let f_cur = std::io::Cursor::new(f_ser);
+        let mut f_r=  BufReader::new(f_cur);
+
+        let (is_empty, f_de) = FrameV1::deserialize(&mut f_r);
+
+        assert_eq!(is_empty, false);
+        assert_eq!(f.seq, f_de.seq);
+        assert_eq!(f.encryption_alg, f_de.encryption_alg);
+        assert_eq!(f.nonce, f_de.nonce);
+        assert_eq!(f.buf_len, f_de.buf_len);
+
+        assert_eq!(f.buf.len(), f_de.buf.len());
+        assert!(f.buf
+            .iter()
+            .zip(f_de.buf.iter())
+            .all(|(u1, u2)| {u1 == u2})
+        )
+    }
+
+    #[test]
+    fn test_serialize_deserialize_header_frames_v1(){
+        let t = TestInit::new()
+            .with_logger();
+
+        let ctx = &t.get_ctx();
+
+        let mut datas = vec![];
+
+        let h1 = HeaderV1{
+            version: 1,
+            salt: String::from(ctx.pwd.salt().unwrap().as_str()), // 22 byte string
+        };
+
+        let f1 = new_frame(1*KB);
+        let f2 = new_frame(4*KB);
+        let f3 = new_frame(16*KB);
+        let f4 = new_frame(8*MB);
+
+        datas.push(h1.serialize());
+        datas.push(f1.serialize());
+        datas.push(f2.serialize());
+        datas.push(f3.serialize());
+        datas.push(f4.serialize());
+        let data = datas.concat();
+
+        let mut r = BufReader::new(Cursor::new(data));
+
+        let (is_empty, h1a) = HeaderV1::deserialize(&mut r);
+        assert_eq!(is_empty, false);
+        assert_eq!(h1.version, h1a.version);
+        assert_eq!(h1.salt, h1a.salt);
+
+        let (is_empty, f1a) = FrameV1::deserialize(&mut r);
+        assert_eq!(is_empty, false);
+        let (is_empty, f2a) = FrameV1::deserialize(&mut r);
+        assert_eq!(is_empty, false);
+        let (is_empty, f3a) = FrameV1::deserialize(&mut r);
+        assert_eq!(is_empty, false);
+        let (is_empty, f4a) = FrameV1::deserialize(&mut r);
+        assert_eq!(is_empty, false);
+
+        let (is_empty, _) = FrameV1::deserialize(&mut r);
+        assert_eq!(is_empty, true);
 
         let fs = vec![
-            FrameV1{
-                seq: 1,
-
-                encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
-                compression_alg: COMPRESSION_ALG_GZIP,
-                nonce: *XNonce::from_slice(&[1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1]),
-                buf_len: 1,
-                buf: vec![1u8; 1],
-            },
-
-            FrameV1{
-                seq: 1,
-
-                encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
-                compression_alg: COMPRESSION_ALG_GZIP,
-                nonce: *XNonce::from_slice(&[1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1]),
-                buf_len: 256,
-                buf: vec![1u8; 256],
-            },
+            (f1, f1a),
+            (f2, f2a),
+            (f3, f3a),
+            (f4, f4a),
         ];
-        debug!("serialize deserialize: new frame");
-        debug!("serialize deserialize: new frame");
 
-        fs.iter().for_each(|f|{
-
-
-            let f_ser = f.serialize();
-            let f_cur = std::io::Cursor::new(f_ser);
-            let mut f_r=  BufReader::new(f_cur);
-
-            let (is_empty, f_de) = FrameV1::deserialize(&mut f_r);
-
-            assert_eq!(is_empty, false);
+        for (f, f_de) in fs {
             assert_eq!(f.seq, f_de.seq);
             assert_eq!(f.encryption_alg, f_de.encryption_alg);
             assert_eq!(f.nonce, f_de.nonce);
             assert_eq!(f.buf_len, f_de.buf_len);
-
-            assert_eq!(f.buf.len(), f_de.buf.len());
-            assert!(f.buf
-                .iter()
-                .zip(f_de.buf.iter())
-                .all(|(u1, u2)| {u1 == u2})
-            )
-        });
+        }
     }
+
+    fn new_frame(size: usize) -> FrameV1 {
+        FrameV1 {
+            seq: 0,
+
+            encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
+            compression_alg: COMPRESSION_ALG_GZIP,
+            nonce: *XNonce::from_slice(&[1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1]),
+            buf_len: usize_u32(size),
+            buf: vec![1u8; size],
+        }
+    }
+
+
 }

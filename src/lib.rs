@@ -134,8 +134,8 @@ mod tests {
     #[ignore]
     fn test_ls_mount_unmount(){
         let t = &TestInit::new()
-            .storage()
-            .logger();
+            .with_storage()
+            .with_logger();
 
         let ctx: Ctx = t.get_ctx();
 
