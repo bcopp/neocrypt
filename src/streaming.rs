@@ -143,8 +143,8 @@ mod tests {
     #[test]
     fn test_streambuf_reader_writer() {
         let t = &TestInit::new()
-            .storage()
-            .logger();
+            .with_storage()
+            .with_logger();
 
         let datas = [
             rand_vec(0..1),
@@ -177,7 +177,6 @@ mod tests {
             debug!("streamingbuf: spawn writer, send {} messages", &msgs_len);
             let t1 = spawn(move ||{
                 let msgs = &m_msgs_cpy.lock().unwrap();
-
 
                 let mut sw = StreamBufWriter::new(s);
                 msgs.iter().for_each(|bytes| {

@@ -31,34 +31,6 @@ type Seq = u64;
 fn park_sender<T>(sender: Sender<T>) { while ! sender.is_empty() {} }
 
 
-fn spawn_reader_decrypt<T>(mut r: BufReader<File>, sender: Sender<T>) -> JoinHandle<()> 
-    where
-        T: Send + 'static,
-        T: ZipCrypt,
-        T: Serialize,
-        T: Deserialize,
-    {
-
-    spawn(move || {
-
-        loop {
-
-            let (is_empty, f) = T::deserialize(&mut r);
-
-            if is_empty {
-                break;
-            }
-
-            let result = sender.send(f);
-
-            if result.is_err() {
-                panic!("{:?}", result);
-            }
-        }
-
-        park_sender(sender);
-    })
-}
 
 fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<(Seq, Vec<u8>)>, sender: Sender<T>) -> JoinHandle<()>
     where
@@ -71,9 +43,6 @@ fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<(Seq, Vec<u8>)>, sender: Sende
     let ctx = ctx.clone();
     spawn(move || {
         let ctx = &ctx;
-
-        // let seq = seq_atomic.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        // let seq_atomic = sync::atomic::AtomicU64::new(0);
 
         receiver
             .iter()
@@ -127,11 +96,38 @@ fn spawn_writer(mut w: BufWriter<File>, receiver: Receiver<Vec<u8>>) -> JoinHand
     spawn(move || {
         receiver.into_iter().for_each(move |frame| {
             w.write_all(&frame).unwrap();
+            w.flush().unwrap();
         });
     })
 }
 
+fn spawn_frame_reader<T>(mut r: BufReader<File>, sender: Sender<T>) -> JoinHandle<()> 
+    where
+        T: Send + 'static,
+        T: Deserialize,
+        T: GetBuf,
+    {
 
+    spawn(move || {
+
+        loop {
+
+            let (is_empty, f) = T::deserialize(&mut r);
+
+            debug!("buf len {}", &f.get_buf().len());
+
+            if is_empty {
+                break;
+            }
+
+            let result = sender.send(f);
+
+            if result.is_err() {
+                panic!("{:?}", result);
+            }
+        }
+    })
+}
 
 fn spawn_packer(src: &PathBuf, sw: StreamBufWriter) -> JoinHandle<()>{
 
@@ -143,7 +139,6 @@ fn spawn_packer(src: &PathBuf, sw: StreamBufWriter) -> JoinHandle<()>{
         builder.finish().unwrap(); // finish writing files
     })
 }
-
 
 fn spawn_unpacker(trg: &PathBuf, sr: StreamBufReader) -> JoinHandle<()>{
 
@@ -187,29 +182,55 @@ fn spawn_order_by_seq<T>(receiver: Receiver<T>, sender: Sender<T>) -> JoinHandle
     })
 }
 
+// unpacker but orders by sequence before writing
+fn spawn_to_seq_bytes<T>(receiver: Receiver<T>, sender: Sender<(u64, Vec<u8>)>) -> JoinHandle<()>
+    where
+        T: Send + 'static,
+        T: Sequenced,
+        T: GetBuf,
+{
+    spawn(move ||{
+        receiver.iter().for_each(|frame| {
+            sender.send((frame.get_seq(), frame.get_buf().clone()));
+        });
+    })
+}
+
+// unpacker but orders by sequence before writing
+fn spawn_to_bytes<T>(receiver: Receiver<T>, sender: Sender<Vec<u8>>) -> JoinHandle<()>
+    where
+        T: Send + 'static,
+        T: Sequenced,
+        T: GetBuf,
+{
+    spawn(move ||{
+        receiver.iter().for_each(|frame| {
+            sender.send(frame.get_buf().clone());
+        });
+    })
+}
+
 #[cfg(test)]
 mod tests {
+
+    use crate::common::*;
+
     use super::*;
     use std::{fs::OpenOptions, io::{Read, Write}, sync::{Arc, Mutex}, time::Instant};
-    use crossbeam::thread;
     use crossbeam_channel::{bounded, unbounded};
+
+    use dirs::home_dir;
     use log::debug;
-    use rayon::iter::split;
-    use std::io::Cursor;
-    use itertools::assert_equal;
 
-    use crate::common::{get_linux_context, new_tmp_dir};
-
-
-
+    /* Packer -> Unpacker*/
     #[test]
     fn test_packer_unpacker() {
         let t = &TestInit::new()
-            .storage()
-            .logger();
+            .with_storage()
+            .with_logger();
 
-        let src= env::current_dir().unwrap().join("dummy_data");
-        let (trg, _)= new_tmp_dir();
+        let src= env::current_dir().unwrap().join("dummy_data").join("documents");
+        let trg = t.new_tmp_path();
 
         let (s, r) = unbounded();
 
@@ -222,15 +243,117 @@ mod tests {
         t1.join().unwrap();
         t2.join().unwrap();
         
-        assert_eq!(get_file_sizes(&src), get_file_sizes(&trg))
+        assert_eq!(get_folder_size(&src), get_folder_size(&trg))
         // assert_eq!(get_folder_md5(&src), get_folder_md5(&trg)) // takes too long
     }
 
+    /*
+    Encrypter Decrypter Test for primary message pipeline
+
+    Verifyies data integrity of message pipeline excluding "T::deserialize" function
+
+    reader -> encrypter -> write -> Vec<_>
+    Vec<_> -> reader -> decrypter -> order by -> writer
+
+    */
     #[test]
-    fn test_encrypt_decrypt() {
+    fn test_1() {
         let t = TestInit::new()
-            .storage()
-            .logger();
+            .with_storage()
+            .with_logger();
+
+        let ctx = &t.get_ctx();
+        let size = t.get_channel_size();
+
+        debug!("using tmp path {:?}", &t.new_tmp_path());
+
+        
+        let folders = [
+            PathBuf::from("/home/cflex/Dropbox/code2/locker/dummy_data/documents"),
+        ];
+
+        for folder in folders {
+
+            let encrypted: PathBuf = t.new_tmp_path();
+            let decrypted: PathBuf = t.new_tmp_path();
+
+            // Encrypt and write to file
+            {
+                let f = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&encrypted)
+                    .unwrap();
+
+                let mut bw = BufWriter::new(f);
+
+                // write header
+                let header = HeaderV1{
+                    version: VERSION_1,
+                    salt: String::from(ctx.pwd.salt().unwrap().as_str()),
+                };
+                bw.write_all(&header.serialize()).unwrap();
+                
+                // pack as tar and write data packets
+                let (s_packer, r_packer) = bounded(size);
+                let (s_encrypter, r_encrypter) = bounded(size);
+                let (s_order_by, r_order_by) = bounded(size);
+                let (s_to_bytes, r_to_bytes) = bounded(size);
+
+                let t1 = spawn_packer(&folder, StreamBufWriter::new(s_packer));
+                let t2 = spawn_encrypt::<FrameV1>(ctx, r_packer, s_encrypter);
+                let t3 = spawn_order_by_seq(r_encrypter, s_order_by);
+                let t4 = spawn_to_bytes(r_order_by, s_to_bytes);
+                let t5 = spawn_writer(
+                    bw,
+                    r_to_bytes,
+                );
+
+                t1.join().unwrap();
+                t2.join().unwrap();
+                t3.join().unwrap();
+                t4.join().unwrap();
+                t5.join().unwrap();
+            }
+
+            // Decrypt and write to file
+            {
+                // read header
+                let mut r = BufReader::new(OpenOptions::new()
+                    .read(true)
+                    .open(&encrypted)
+                    .unwrap()
+                );
+                let (is_empty, _) = HeaderV1::deserialize(&mut r);
+                assert_eq!(is_empty, false);
+                
+                // unpack tar and read frames
+                let (s_reader, r_reader) = bounded(size);
+                let (s_decrypter, r_decrypter) = bounded(size);
+                let (s_order_by, r_order_by) = bounded(size);
+                let (s_to_bytes, r_to_bytes) = bounded(size);
+
+                let t1 = spawn_frame_reader::<FrameV1>(r, s_reader);
+                let t2 = spawn_decrypt(&ctx, r_reader, s_decrypter);
+                let t3 = spawn_order_by_seq(r_decrypter, s_order_by);
+                let t4 = spawn_to_seq_bytes(r_order_by, s_to_bytes);
+                let t5 = spawn_unpacker(&decrypted, StreamBufReader::new(r_to_bytes));
+
+                t1.join().unwrap();
+                t2.join().unwrap();
+                t3.join().unwrap();
+                t4.join().unwrap();
+                t5.join().unwrap();
+            }
+
+            assert_eq!(get_folder_size(&encrypted), get_folder_size(&decrypted));
+    }
+
+    #[test]
+    fn test_encrypt_d_decrypt_msgs() {
+        let t = TestInit::new()
+            .with_storage()
+            .with_logger();
 
         let ctx = &t.get_ctx();
         let size = t.get_channel_size();
@@ -387,4 +510,5 @@ mod tests {
             }
         }
     }
+}
 }
