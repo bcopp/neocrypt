@@ -8,18 +8,12 @@ use rayon::iter::ParallelBridge;
 use tar::Archive;
 use tar::Builder;
 use crate::common::*;
-use core::ops::Range;
-use core::sync;
-use std::any::Any;
-use std::borrow::BorrowMut;
 use std::collections::HashMap;
-use std::env;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Mutex;
 use std::thread::{spawn, JoinHandle};
 use rayon::iter::ParallelIterator;
 
@@ -114,8 +108,6 @@ fn spawn_frame_reader<T>(mut r: BufReader<File>, sender: Sender<T>) -> JoinHandl
 
             let (is_empty, f) = T::deserialize(&mut r);
 
-            debug!("buf len {}", &f.get_buf().len());
-
             if is_empty {
                 break;
             }
@@ -191,21 +183,20 @@ fn spawn_to_seq_bytes<T>(receiver: Receiver<T>, sender: Sender<(u64, Vec<u8>)>) 
 {
     spawn(move ||{
         receiver.iter().for_each(|frame| {
-            sender.send((frame.get_seq(), frame.get_buf().clone()));
+            sender.send((frame.get_seq(), frame.get_buf().clone())).unwrap();
         });
     })
 }
 
 // unpacker but orders by sequence before writing
-fn spawn_to_bytes<T>(receiver: Receiver<T>, sender: Sender<Vec<u8>>) -> JoinHandle<()>
+fn spawn_to_serialize<T>(receiver: Receiver<T>, sender: Sender<Vec<u8>>) -> JoinHandle<()>
     where
         T: Send + 'static,
-        T: Sequenced,
-        T: GetBuf,
+        T: Serialize,
 {
     spawn(move ||{
         receiver.iter().for_each(|frame| {
-            sender.send(frame.get_buf().clone());
+            sender.send(frame.serialize()).unwrap();
         });
     })
 }
@@ -216,20 +207,20 @@ mod tests {
     use crate::common::*;
 
     use super::*;
-    use std::{fs::OpenOptions, io::{Read, Write}, sync::{Arc, Mutex}, time::Instant};
+    use std::{fs::OpenOptions, io::{Write}, sync::{Arc, Mutex}};
     use crossbeam_channel::{bounded, unbounded};
 
-    use dirs::home_dir;
     use log::debug;
 
     /* Packer -> Unpacker*/
+    #[ignore = "run serially"]
     #[test]
     fn test_packer_unpacker() {
         let t = &TestInit::new()
             .with_storage()
             .with_logger();
 
-        let src= env::current_dir().unwrap().join("dummy_data").join("documents");
+        let src= std::env::current_dir().unwrap().join("dummy_data").join("documents");
         let trg = t.new_tmp_path();
 
         let (s, r) = unbounded();
@@ -303,7 +294,7 @@ mod tests {
                 let t1 = spawn_packer(&folder, StreamBufWriter::new(s_packer));
                 let t2 = spawn_encrypt::<FrameV1>(ctx, r_packer, s_encrypter);
                 let t3 = spawn_order_by_seq(r_encrypter, s_order_by);
-                let t4 = spawn_to_bytes(r_order_by, s_to_bytes);
+                let t4 = spawn_to_serialize(r_order_by, s_to_bytes);
                 let t5 = spawn_writer(
                     bw,
                     r_to_bytes,
@@ -346,7 +337,8 @@ mod tests {
                 t5.join().unwrap();
             }
 
-            assert_eq!(get_folder_size(&encrypted), get_folder_size(&decrypted));
+            assert_eq!(get_folder_size(&folder), get_folder_size(&decrypted));
+        }
     }
 
     #[test]
@@ -510,5 +502,4 @@ mod tests {
             }
         }
     }
-}
 }

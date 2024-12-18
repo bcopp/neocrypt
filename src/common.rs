@@ -867,7 +867,7 @@ fn init_logger() -> Result<(), Box<dyn std::error::Error>>{
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::OpenOptions, io::{BufRead, BufReader, BufWriter, Write}, path::PathBuf};
+    use std::{fs::OpenOptions, io::{BufRead, BufReader, BufWriter, Write}, iter::zip, path::PathBuf};
 
     use crate::new_uid;
 
@@ -916,13 +916,10 @@ mod tests {
         assert_eq!(f.encryption_alg, f_de.encryption_alg);
         assert_eq!(f.nonce, f_de.nonce);
         assert_eq!(f.buf_len, f_de.buf_len);
-
         assert_eq!(f.buf.len(), f_de.buf.len());
-        assert!(f.buf
-            .iter()
-            .zip(f_de.buf.iter())
-            .all(|(u1, u2)| {u1 == u2})
-        )
+        for (b1, b2) in zip(&f.buf, &f_de.buf){
+            assert_eq!(b1, b2);
+        }
     }
 
     #[test]
@@ -982,12 +979,17 @@ mod tests {
             assert_eq!(f.encryption_alg, f_de.encryption_alg);
             assert_eq!(f.nonce, f_de.nonce);
             assert_eq!(f.buf_len, f_de.buf_len);
+            assert_eq!(f.buf.len(), f_de.buf.len());
+
+            for (b1, b2) in zip(&f.buf, &f_de.buf){
+                assert_eq!(b1, b2);
+            }
         }
     }
 
     fn new_frame(size: usize) -> FrameV1 {
         FrameV1 {
-            seq: 0,
+            seq: 1,
 
             encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
             compression_alg: COMPRESSION_ALG_GZIP,
