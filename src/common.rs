@@ -22,30 +22,20 @@ pub const DEFAULT_SIZE: usize = 8 * KB;
 pub const VERSION_NULL: u16 = 0;
 pub const VERSION_1: u16 = 1;
 
-pub const ENCRYPTION_ALG_NULL: u16 = 0;
-pub const ENCRYPTION_ALG_TESTING_ONLY_NONE: u16 = 1;
-pub const ENCRYPTION_ALG_CHACHPOLY20: u16 = 2;
+pub type EncryptionAlg = u16;
+pub type CompressionAlg = u16;
 
-pub const COMPRESSION_ALG_NULL: u16 = 0;
-pub const COMPRESSION_ALG_NONE: u16 = 1;
-pub const COMPRESSION_ALG_GZIP: u16 = 2;
-pub const COMPRESSION_ALG_BLOSC: u16 = 3;
+pub const ENCRYPTION_ALG_NULL: EncryptionAlg = 0;
+pub const ENCRYPTION_ALG_TESTING_ONLY_NONE: EncryptionAlg = 1;
+pub const ENCRYPTION_ALG_CHACHPOLY20: EncryptionAlg = 2;
+
+pub const COMPRESSION_ALG_NULL: CompressionAlg = 0;
+pub const COMPRESSION_ALG_NONE: CompressionAlg = 1;
+pub const COMPRESSION_ALG_GZIP: CompressionAlg = 2;
+pub const COMPRESSION_ALG_BLOSC: CompressionAlg = 3;
 
 type IsEmpty = bool;
 
-
-/*
-    --stdin-pwd
-        uses pwd piped from stdin
-    --encryption
-        chachapoly (Default)
-    --threads
-        num of cores (Default)
-    --zeroing-passes
-        number of passes when zeroing out data
-    --no-mount
-        encrypt files and do not mount
- */
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum OSType{
     Null = 0,
@@ -445,9 +435,6 @@ impl ZipCrypt for FrameV1 {
     }
 }
 
-
-
-
 pub fn bytes_fmt(n: usize) -> String {
     if n > GB {
         return format!("{}GB", n / GB);
@@ -611,11 +598,14 @@ pub fn get_folder_size(src: &PathBuf) -> String {
 
     let mut paths = vec![];
 
-    for entry in WalkDir::new(src){
-        let e = entry.unwrap();
-
-        if e.file_type().is_file(){
-            paths.push(e.metadata().unwrap().size());
+    for entry in WalkDir::new(src).into_iter(){
+        match entry {
+            Ok(e) => {
+                if e.file_type().is_file(){
+                    paths.push(e.metadata().unwrap().size());
+                }
+            }
+            Err(e) => {panic!("error: could not walk directory {}", e)}
         }
     }
 
@@ -626,7 +616,7 @@ pub fn get_folder_size(src: &PathBuf) -> String {
 pub fn get_folder_paths(src: &PathBuf) -> Vec<PathBuf> {
     let mut paths = vec![];
 
-    for entry in WalkDir::new(src){
+    for entry in WalkDir::new(src).into_iter(){
         let e = entry.unwrap();
 
         if e.file_type().is_file(){
@@ -718,17 +708,15 @@ impl PathCleanup {
 impl Drop for PathCleanup{
     fn drop(&mut self) {
 
-        /*
-        let TMP_PATH = PathBuf::new().join("tmp");
+        let tmp_path = PathBuf::new().join("tmp");
 
         let tmp = self.path.clone();
-        if tmp.starts_with(TMP_PATH){
+        if tmp.starts_with(tmp_path){
             match std::fs::remove_dir_all(tmp){
                 Ok(()) => {},
                 Err(e) => {debug!("error: could not cleanup {:?}", &self.path)}
             }
         }
-         */
     }
 }
 
@@ -787,6 +775,25 @@ impl TestInit {
         return num_cpus::get() * 2;
     }
 
+    pub fn get_home_dir(&self) -> PathBuf {
+        home_dir().unwrap()
+    }
+
+    // returns directory of project
+    pub fn get_cargo_dir(&self) -> PathBuf {
+        self.get_home_dir()
+            .join("Dropbox")
+            .join("code2")
+            .join("locker")
+    }
+
+    // returns directory of project
+    pub fn get_documents(&self) -> PathBuf {
+        self.get_cargo_dir()
+            .join("dummy_data")
+            .join("documents")
+    }
+
     pub fn new_tmp_path(&self) -> PathBuf {
         return PathBuf::from(self.tmp.clone()).join(new_uid(8));
     }
@@ -826,8 +833,8 @@ impl TestInit {
 
             close_all: false,
             
-            compression_alg: COMPRESSION_ALG_NONE,
-            // compression_alg: COMPRESSION_ALG_GZIP,
+            // compression_alg: COMPRESSION_ALG_NONE,
+            compression_alg: COMPRESSION_ALG_GZIP,
             // encryption_alg: ENCRYPTION_ALG_TESTING_ONLY_NONE,
             encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
         }

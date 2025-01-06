@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::process::exit;
 use std::io;
 
+// lists all directories that exist in mount_from with an associated mount_to
 pub fn ls(ctx: &Ctx) ->  Result<Vec<PathBuf>, io::Error> {
 
     let srcs_read= std::fs::read_dir(&ctx.storage.mount_from)?;
@@ -31,16 +32,17 @@ pub fn ls(ctx: &Ctx) ->  Result<Vec<PathBuf>, io::Error> {
     println!("srcs {:?}", srcs);
     println!("trgs {:?}", trgs);
 
-    let mut cleanup_srcs = vec![];
+    /* might have improperly ejected */
+    let mut dangling_srcs = vec![];
     for s in &srcs{
         if trgs
             .iter()
-            .any( |t| s.file_name() == t.file_name() ) {} else { cleanup_srcs.push(s); }
+            .any( |t| s.file_name() == t.file_name() ) {} else { dangling_srcs.push(s); }
     }
 
-    println!("cleanup srcs {:?}", cleanup_srcs);
+    println!("cleanup srcs {:?}", dangling_srcs);
 
-    for s in cleanup_srcs {
+    for s in dangling_srcs {
         std::fs::remove_dir_all(s.path()).unwrap();
     }
 
@@ -54,6 +56,7 @@ pub fn ls(ctx: &Ctx) ->  Result<Vec<PathBuf>, io::Error> {
     Ok(paths)
 }
 
+// creates a new directory by name and mounts it
 pub fn new(ctx: &Ctx) -> Result<Mount, io::Error>{
 
     let src = &ctx.storage.mount_from.join(&ctx.name);
@@ -64,24 +67,33 @@ pub fn new(ctx: &Ctx) -> Result<Mount, io::Error>{
     Ok(mount(src, trg)?)
 }
 
+// decrypts a file to mount_from and mounts in mount_to
+pub fn open(ctx: &Ctx) {
+}
+
+// encrypts a file from mount_from, unmounts and cleansup the directory
 pub fn close(ctx: &Ctx) {
     let entries: Vec<_> = read_dir(&ctx.storage.mount_to).unwrap().collect();
 
     if ctx.close_all {
         panic!("unimplemented")
     } else {
-        // TODO: decrypt back to files
-
         if entries.len() != 0 {
         } else {
-
-
         }
 
         let to_unmount = &ctx.storage.mount_to.join(&ctx.name);
         unmount(to_unmount).unwrap();
         remove_dir_all(to_unmount).unwrap();
     }
+}
+
+/*
+when ejecting improperly (i.e. without running close) there may be a directory dangling in mount_from
+repair re-mounts these any dangling directories to the drive
+*/
+pub fn repair(ctx: &Ctx) {
+
 }
 
 fn mount(src: &PathBuf, target: &PathBuf) -> Result<Mount, io::Error>{
@@ -131,7 +143,7 @@ mod tests {
     use common::*;
 
     #[test]
-    #[ignore]
+    #[ignore = "test manually"]
     fn test_ls_mount_unmount(){
         let t = &TestInit::new()
             .with_storage()

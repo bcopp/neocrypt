@@ -50,9 +50,6 @@ fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<(Seq, Vec<u8>)>, sender: Sende
                 Err(e) => {panic!("error: sender error during encrypt: {:?}", e);}
             }
         });
-
-        // park_sender(sender);
-        debug!("channel closed: encrypter")
     })
 }
 
@@ -80,9 +77,6 @@ fn spawn_decrypt<T>(ctx: &Ctx, receiver: Receiver<T>, sender: Sender<T>) -> Join
             Err(e) => {panic!("error: sender error during decrypt: {:?}", e);}
         }
     });
-
-        // park_sender(sender);
-        debug!("channel closed: decrypter")
     })
 }
 
@@ -168,9 +162,6 @@ fn spawn_order_by_seq<T>(receiver: Receiver<T>, sender: Sender<T>) -> JoinHandle
                 }
             }
         });
-
-        park_sender(sender);
-        debug!("channel closed: order by seq")
     })
 }
 
@@ -207,13 +198,14 @@ mod tests {
     use crate::common::*;
 
     use super::*;
-    use std::{fs::OpenOptions, io::{Write}, sync::{Arc, Mutex}};
+    use std::{fs::OpenOptions, io::Write, sync::{Arc, Mutex}};
     use crossbeam_channel::{bounded, unbounded};
 
+    use dirs::home_dir;
     use log::debug;
+    use rsa::pkcs8::der::Header;
 
     /* Packer -> Unpacker*/
-    #[ignore = "run serially"]
     #[test]
     fn test_packer_unpacker() {
         let t = &TestInit::new()
@@ -225,8 +217,8 @@ mod tests {
 
         let (s, r) = unbounded();
 
-        let sw = StreamBufWriter::new(s);
-        let sr = StreamBufReader::new(r);
+        let sw = StreamBufWriter::new(s, COMPRESSION_ALG_NONE);
+        let sr = StreamBufReader::new(r, COMPRESSION_ALG_NONE);
 
         let t1 = spawn_packer(&src, sw);
         let t2 = spawn_unpacker(&trg, sr);
@@ -239,16 +231,14 @@ mod tests {
     }
 
     /*
-    Encrypter Decrypter Test for primary message pipeline
+    Encrypter Decrypter Test for message pipeline
 
-    Verifyies data integrity of message pipeline excluding "T::deserialize" function
-
-    reader -> encrypter -> write -> Vec<_>
-    Vec<_> -> reader -> decrypter -> order by -> writer
+    packer -> encrypter -> order_by -> serializer
+    frame_reader -> decrypter -> deserializer -> order_by -> unpacker
 
     */
     #[test]
-    fn test_1() {
+    fn test_encrypt_decrypt() {
         let t = TestInit::new()
             .with_storage()
             .with_logger();
@@ -260,13 +250,16 @@ mod tests {
 
         
         let folders = [
-            PathBuf::from("/home/cflex/Dropbox/code2/locker/dummy_data/documents"),
+            t.get_documents(),
         ];
 
         for folder in folders {
 
+            debug!("folder {}", folder.to_str().unwrap());
             let encrypted: PathBuf = t.new_tmp_path();
             let decrypted: PathBuf = t.new_tmp_path();
+
+            let header: HeaderV1;
 
             // Encrypt and write to file
             {
@@ -279,7 +272,7 @@ mod tests {
                 let mut bw = BufWriter::new(f);
 
                 // write header
-                let header = HeaderV1{
+                header = HeaderV1{
                     version: VERSION_1,
                     salt: String::from(ctx.pwd.salt().unwrap().as_str()),
                 };
@@ -291,7 +284,7 @@ mod tests {
                 let (s_order_by, r_order_by) = bounded(size);
                 let (s_to_bytes, r_to_bytes) = bounded(size);
 
-                let t1 = spawn_packer(&folder, StreamBufWriter::new(s_packer));
+                let t1 = spawn_packer(&folder, StreamBufWriter::new(s_packer, ctx.compression_alg));
                 let t2 = spawn_encrypt::<FrameV1>(ctx, r_packer, s_encrypter);
                 let t3 = spawn_order_by_seq(r_encrypter, s_order_by);
                 let t4 = spawn_to_serialize(r_order_by, s_to_bytes);
@@ -315,8 +308,10 @@ mod tests {
                     .open(&encrypted)
                     .unwrap()
                 );
-                let (is_empty, _) = HeaderV1::deserialize(&mut r);
+                let (is_empty, header_de) = HeaderV1::deserialize(&mut r);
                 assert_eq!(is_empty, false);
+                assert_eq!(header.version, header_de.version);
+                assert_eq!(header.salt, header_de.salt);
                 
                 // unpack tar and read frames
                 let (s_reader, r_reader) = bounded(size);
@@ -328,7 +323,7 @@ mod tests {
                 let t2 = spawn_decrypt(&ctx, r_reader, s_decrypter);
                 let t3 = spawn_order_by_seq(r_decrypter, s_order_by);
                 let t4 = spawn_to_seq_bytes(r_order_by, s_to_bytes);
-                let t5 = spawn_unpacker(&decrypted, StreamBufReader::new(r_to_bytes));
+                let t5 = spawn_unpacker(&decrypted, StreamBufReader::new(r_to_bytes, ctx.compression_alg));
 
                 t1.join().unwrap();
                 t2.join().unwrap();
@@ -342,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encrypt_d_decrypt_msgs() {
+    fn test_msgs_encrypt_decrypt() {
         let t = TestInit::new()
             .with_storage()
             .with_logger();
