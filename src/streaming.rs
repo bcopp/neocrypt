@@ -1,4 +1,4 @@
-use std::io::{self, Read, Write};
+use std::io::{self, Cursor, Read, Write};
 
 use crossbeam_channel::{Receiver, Sender};
 use log::{debug, trace};
@@ -6,21 +6,15 @@ use crate::common::*;
 
 
 pub struct StreamBufWriter {
-    pub s: Sender<(u64, Vec<u8>)>,
+    pub s: Sender<Vec<u8>>,
     pub buf: Vec<u8>,
-    pub seq: u64,
-    
-    compression_alg: CompressionAlg,
 }
 
 impl StreamBufWriter {
-    pub fn new(sender: Sender<(u64, Vec<u8>)>, compression_alg: CompressionAlg) -> Self {
+    pub fn new(sender: Sender<Vec<u8>>) -> Self {
         StreamBufWriter{
             s: sender,
             buf: vec![],
-            seq: 0,
-
-            compression_alg: compression_alg,
         }
     }
 }
@@ -31,19 +25,15 @@ impl Write for StreamBufWriter {
 
         self.buf.extend_from_slice(buf);
 
-        if self.buf.len() > DEFAULT_SIZE {
+        if self.buf.len() >= DEFAULT_SIZE {
 
-            match self.s.send((self.seq, self.buf.clone())) {
-                Ok(()) => {
-                    self.seq += 1
-
-
-                },
+            match self.s.send(self.buf.clone()) {
+                Ok(()) => {},
                 Err(e) => {trace!("error: streambufwriter send {:?}", e)}
             }
             self.buf = vec![];
         }
-
+    
 
         return Ok(buf.len());
     }
@@ -51,8 +41,8 @@ impl Write for StreamBufWriter {
     fn flush(&mut self) -> io::Result<()> {
 
         if ! self.buf.is_empty() {
-            match self.s.send((self.seq, self.buf.clone())) {
-                Ok(()) => {self.buf = vec![]; self.seq += 1},
+            match self.s.send(self.buf.clone()) {
+                Ok(()) => {self.buf = vec![]},
                 Err(e) => {trace!("error: streambufwriter send, internal buf len {:?}, {:?}", self.buf.len(), e)},
             }
         }
@@ -72,20 +62,16 @@ impl Drop for StreamBufWriter{
 
 
 pub struct StreamBufReader{
-    r: Receiver<(u64, Vec<u8>)>,
+    r: Receiver<Vec<u8>>,
     buf: Vec<u8>,
-
-    compression_alg: CompressionAlg,
 }
 
 impl StreamBufReader{
-    pub fn new(receiver: Receiver<(u64, Vec<u8>)>, compression_alg: CompressionAlg) -> Self {
+    pub fn new(receiver: Receiver<Vec<u8>>) -> Self {
 
         StreamBufReader{
             r: receiver,
             buf: vec![],
-
-            compression_alg: compression_alg,
         }
     }
 }
@@ -103,7 +89,7 @@ impl Read for StreamBufReader {
             // refresh internal buffer
             if self.buf.is_empty() {
                 match self.r.recv() {
-                    Ok((_, buf)) => {self.buf = buf},
+                    Ok(buf) => {self.buf = buf},
                     Err(_) => {return Ok(bytes_read);},
                 }
             }
@@ -192,7 +178,7 @@ mod tests {
             let t1 = spawn(move ||{
                 let msgs = &m_msgs_cpy.lock().unwrap();
 
-                let mut sw = StreamBufWriter::new(s, COMPRESSION_ALG_NONE);
+                let mut sw = StreamBufWriter::new(s);
                 msgs.iter().for_each(|bytes| {
                     sw.write_all(bytes.as_ref()).unwrap();
                     sw.flush().unwrap();
@@ -204,7 +190,7 @@ mod tests {
             let t2 = spawn(move ||{
                 let mut processed = m_processed_cpy.lock().unwrap();
 
-                let mut sr = StreamBufReader::new(r, COMPRESSION_ALG_NONE);
+                let mut sr = StreamBufReader::new(r);
 
                 sr.read_to_end(&mut processed).unwrap(); // read from sr
             });
@@ -223,36 +209,4 @@ mod tests {
             }
         }
     }
-
-    /* 
-    #[test]
-    fn test_gzencoder(){
-        let t = TestInit::new()
-            .with_logger();
-
-        unsafe {
-
-            let mut compressed = vec![];
-
-            let v1 = vec![1u8; 100];
-            let mut cur = Cursor::new(v1);
-            let mut cur_ptr = &cur as *const Cursor<Vec<u8>>;
-
-            let mut enc = GzEncoder::new(std::io::BufReader::new(cur), Compression::default());
-
-            println!("len {}", compressed.len());
-            enc.read_to_end(&mut compressed);
-
-            println!("len {}", compressed.len());
-
-            let mut cur2 = *cur_ptr;
-
-            cur2.rewind();
-            enc.read_to_end(&mut compressed);
-
-            println!("len {}", compressed.len());
-        }
-
-    }
-    */
 }

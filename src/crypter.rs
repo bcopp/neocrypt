@@ -3,6 +3,9 @@
 
 use crossbeam_channel::Sender;
 use crossbeam_channel::Receiver;
+use flate2::read::GzDecoder;
+use flate2::read::GzEncoder;
+use flate2::Compression;
 use log::debug;
 use rayon::iter::ParallelBridge;
 use tar::Archive;
@@ -12,6 +15,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::BufWriter;
+use std::io::Read;
 use std::io::Write;
 use std::path::PathBuf;
 use std::thread::{spawn, JoinHandle};
@@ -123,6 +127,8 @@ fn spawn_packer(src: &PathBuf, sw: StreamBufWriter) -> JoinHandle<()>{
 
         builder.append_dir_all(".", &src).unwrap();
         builder.finish().unwrap(); // finish writing files
+
+        debug!("closing packer");
     })
 }
 
@@ -132,6 +138,8 @@ fn spawn_unpacker(trg: &PathBuf, sr: StreamBufReader) -> JoinHandle<()>{
     spawn(move || {
         let mut archive = Archive::new(sr);
         archive.unpack(trg).unwrap();
+
+        debug!("closing unpacker");
     })
 }
 
@@ -165,8 +173,61 @@ fn spawn_order_by_seq<T>(receiver: Receiver<T>, sender: Sender<T>) -> JoinHandle
     })
 }
 
+fn spawn_compressor_gzip(mut br: StreamBufReader, sender: Sender<Vec<u8>>) -> JoinHandle<()>{
+    spawn(move || {
+
+        let mut encoder = GzEncoder::new(br, Compression::default());
+        let mut buf = vec![0u8; DEFAULT_SIZE];
+
+        loop {
+            let (bytes_read, _) = read_until(&mut encoder, &mut buf, DEFAULT_SIZE).unwrap();
+
+            if bytes_read == 0 {
+                break;
+            } else {
+                sender.send(buf[..bytes_read].to_vec()).unwrap();
+                buf = vec![0u8; DEFAULT_SIZE];   
+            }
+        }
+        
+        debug!("closing compressor");
+    })
+}
+
+fn spawn_decompressor_gzip(br: StreamBufReader, sender: Sender<Vec<u8>>) -> JoinHandle<()>{
+
+    spawn(move || {
+        let mut decoder = GzDecoder::new(br);
+        let mut buf = vec![0u8; DEFAULT_SIZE];
+
+        loop {
+            let (bytes_read, _) = read_until(&mut decoder, &mut buf, DEFAULT_SIZE).unwrap();
+
+            if bytes_read == 0 {
+                break;
+            } else {
+                sender.send(buf[..bytes_read].to_vec()).unwrap();
+                buf = vec![0u8; DEFAULT_SIZE];   
+            }
+        }
+        debug!("closing decompressor");
+    })
+}
+
+// attaches seq to outgoing Vec<u8> as (u64, Vec<u8>)
+fn spawn_with_seq<T>(receiver: Receiver<T>, sender: Sender<(u64, T)>) -> JoinHandle<()>
+where 
+    T: Send + 'static
+{
+    spawn(move ||{
+        receiver.iter().enumerate().for_each(|(seq, data)| {
+            sender.send((usize_u64(seq), data)).unwrap();
+        });
+    })
+}
+
 // unpacker but orders by sequence before writing
-fn spawn_to_seq_bytes<T>(receiver: Receiver<T>, sender: Sender<(u64, Vec<u8>)>) -> JoinHandle<()>
+fn spawn_to_seq_bytes<T>(receiver: Receiver<T>, sender: Sender<Vec<u8>>) -> JoinHandle<()>
     where
         T: Send + 'static,
         T: Sequenced,
@@ -174,7 +235,7 @@ fn spawn_to_seq_bytes<T>(receiver: Receiver<T>, sender: Sender<(u64, Vec<u8>)>) 
 {
     spawn(move ||{
         receiver.iter().for_each(|frame| {
-            sender.send((frame.get_seq(), frame.get_buf().clone())).unwrap();
+            sender.send(frame.get_buf().clone()).unwrap();
         });
     })
 }
@@ -202,10 +263,12 @@ mod tests {
     use crossbeam_channel::{bounded, unbounded};
 
     use dirs::home_dir;
+    use flate2::{bufread::GzEncoder, Compression};
     use log::debug;
     use rsa::pkcs8::der::Header;
 
-    /* Packer -> Unpacker*/
+    /* Packer(Tar) -> Unpacker(Tar)*/
+    #[ignore = "run serially"]
     #[test]
     fn test_packer_unpacker() {
         let t = &TestInit::new()
@@ -217,8 +280,8 @@ mod tests {
 
         let (s, r) = unbounded();
 
-        let sw = StreamBufWriter::new(s, COMPRESSION_ALG_NONE);
-        let sr = StreamBufReader::new(r, COMPRESSION_ALG_NONE);
+        let sw = StreamBufWriter::new(s);
+        let sr = StreamBufReader::new(r);
 
         let t1 = spawn_packer(&src, sw);
         let t2 = spawn_unpacker(&trg, sr);
@@ -228,6 +291,44 @@ mod tests {
         
         assert_eq!(get_folder_size(&src), get_folder_size(&trg))
         // assert_eq!(get_folder_md5(&src), get_folder_md5(&trg)) // takes too long
+    }
+
+    // Packer -> Compressor -> Decompressor -> Unpacker
+    #[test]
+    fn test_compressor() {
+        let t = TestInit::new()
+            .with_storage()
+            .with_logger();
+
+        let ctx = &t.get_ctx();
+        let size = t.get_channel_size();
+
+        let folders = [
+            t.get_documents(),
+        ];
+
+        for folder in folders {
+
+            let decompressed: PathBuf = t.new_tmp_path();
+
+            let (s_packer, r_packer) = bounded(size);
+            let (s_compressor, r_compressor) = bounded(size);
+            let (s_decompressor, r_decompressor) = bounded(size);
+
+            let t1 = spawn_packer(&folder, StreamBufWriter::new(s_packer));
+            let t2 = spawn_compressor_gzip(StreamBufReader::new(r_packer), s_compressor);
+            let t3 = spawn_decompressor_gzip(StreamBufReader::new(r_compressor), s_decompressor);
+            let t4 = spawn_unpacker(&decompressed, StreamBufReader::new(r_decompressor));
+
+            t4.join().unwrap();
+            t3.join().unwrap();
+            t2.join().unwrap();
+            t1.join().unwrap();
+
+            assert_eq!(get_folder_size(&folder), get_folder_size(&decompressed));
+
+            debug!("folder {}", folder.to_str().unwrap());
+        }
     }
 
     /*
@@ -245,8 +346,6 @@ mod tests {
 
         let ctx = &t.get_ctx();
         let size = t.get_channel_size();
-
-        debug!("using tmp path {:?}", &t.new_tmp_path());
 
         
         let folders = [
@@ -280,15 +379,17 @@ mod tests {
                 
                 // pack as tar and write data packets
                 let (s_packer, r_packer) = bounded(size);
+                let (s_with_seq, r_with_seq) = bounded(size);
                 let (s_encrypter, r_encrypter) = bounded(size);
                 let (s_order_by, r_order_by) = bounded(size);
                 let (s_to_bytes, r_to_bytes) = bounded(size);
 
-                let t1 = spawn_packer(&folder, StreamBufWriter::new(s_packer, ctx.compression_alg));
-                let t2 = spawn_encrypt::<FrameV1>(ctx, r_packer, s_encrypter);
-                let t3 = spawn_order_by_seq(r_encrypter, s_order_by);
-                let t4 = spawn_to_serialize(r_order_by, s_to_bytes);
-                let t5 = spawn_writer(
+                let t1 = spawn_packer(&folder, StreamBufWriter::new(s_packer));
+                let t2 = spawn_with_seq(r_packer, s_with_seq);
+                let t3 = spawn_encrypt::<FrameV1>(ctx, r_with_seq, s_encrypter);
+                let t4 = spawn_order_by_seq(r_encrypter, s_order_by);
+                let t5 = spawn_to_serialize(r_order_by, s_to_bytes);
+                let t6 = spawn_writer(
                     bw,
                     r_to_bytes,
                 );
@@ -298,6 +399,7 @@ mod tests {
                 t3.join().unwrap();
                 t4.join().unwrap();
                 t5.join().unwrap();
+                t6.join().unwrap();
             }
 
             // Decrypt and write to file
@@ -323,7 +425,7 @@ mod tests {
                 let t2 = spawn_decrypt(&ctx, r_reader, s_decrypter);
                 let t3 = spawn_order_by_seq(r_decrypter, s_order_by);
                 let t4 = spawn_to_seq_bytes(r_order_by, s_to_bytes);
-                let t5 = spawn_unpacker(&decrypted, StreamBufReader::new(r_to_bytes, ctx.compression_alg));
+                let t5 = spawn_unpacker(&decrypted, StreamBufReader::new(r_to_bytes));
 
                 t1.join().unwrap();
                 t2.join().unwrap();

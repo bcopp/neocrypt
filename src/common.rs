@@ -560,11 +560,11 @@ pub fn read_until<R: Read>(r: &mut R, buf: &mut Vec<u8>, buf_size: usize) -> Res
 
         t += b;
 
+        if t == buf.len() {
+            return Ok((t, IOFlag::ReadExact));
+        }
         if b == 0 && t == 0 { 
             return Ok((t, IOFlag::EOF));
-        }
-        if b == 0 && t == buf.len() {
-            return Ok((t, IOFlag::ReadExact));
         }
         if b == 0 && t != 0 && t < buf_size { 
             return Ok((t, IOFlag::PartialRead));
@@ -794,8 +794,11 @@ impl TestInit {
             .join("documents")
     }
 
+    // returns a a path such as tmp/<8_byte_uid>
     pub fn new_tmp_path(&self) -> PathBuf {
-        return PathBuf::from(self.tmp.clone()).join(new_uid(8));
+        let tmp_path =  PathBuf::from(self.tmp.clone()).join(new_uid(8));
+        debug!("using tmp path {:?}", &tmp_path);
+        return tmp_path;
     }
     
     fn new_ctx(root: &PathBuf) -> Ctx {
