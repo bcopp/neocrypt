@@ -17,23 +17,22 @@ Serializer & Deserializer Headers
 ```
 ### FrameV1 Format ###
 
-Header: | version: u16 | salt: [u8; 22] |
-Frames:                                 | seq: u64 | encryption_alg: u16 | compression_alg: u16 | nonce: [u8; 24] | buf_len: u32 | buf: [u8; buf_len]
-                                            .
-                                            .
-                                            .
+Header: | version: u16 | | compression_alg: u16 | salt: [u8; 22] |
+Frames:                                                          | seq: u64 | encryption_alg: u16 | nonce: [u8; 24] | buf_len: u32 | buf: [u8; buf_len]
+                                                                 .
+                                                                 .
+                                                                 .
 ```
 
 ## Core Library Support
 
 OS Support
 * [x] - linux
-* [ ] - MacOS
+* [x] - MacOS
 
 Compression Algs: 
 * [x] - Gzip
-* [x] - blosc
-* [ ] - lz4 
+* [ ] - lz4flex
 
 Encryption Algs:
 * [x] - ChaChaPoly20 & StreamCipher1305

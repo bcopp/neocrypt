@@ -32,7 +32,6 @@ pub const ENCRYPTION_ALG_CHACHPOLY20: EncryptionAlg = 2;
 pub const COMPRESSION_ALG_NULL: CompressionAlg = 0;
 pub const COMPRESSION_ALG_NONE: CompressionAlg = 1;
 pub const COMPRESSION_ALG_GZIP: CompressionAlg = 2;
-pub const COMPRESSION_ALG_BLOSC: CompressionAlg = 3;
 
 type IsEmpty = bool;
 
@@ -68,8 +67,9 @@ pub struct StorageDirs{
 // field order is ser & deser order
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct HeaderV1{
-    pub version: u16, // [u16; 1];
-    pub salt: String, // B64_String = [u8; 22] from [u8; 16] = 128bit, 
+    pub version: u16,           // [u16; 1];
+    pub compression_alg: u16,   // [u16; 1];
+    pub salt: String,           // B64_String = [u8; 22] from [u8; 16] = 128bit, 
 }
 
 // field order is ser & deser order
@@ -77,8 +77,7 @@ pub struct HeaderV1{
 pub struct FrameV1{
     pub seq: u64,               // [u64; 1]
 
-    pub encryption_alg: u16,          // [u16; 1]
-    pub compression_alg: u16,   // [u16; 1]
+    pub encryption_alg: u16,    // [u16; 1]
     pub nonce: XNonce,          // [u8; 24]
     pub buf_len: u32,           // [u32; 8]
 
@@ -105,19 +104,22 @@ pub trait Deserialize {
     fn deserialize<R: Read>(r: &mut R) -> (IsEmpty, Self);
 }
 
-pub trait ZipCrypt {
-    fn unzip_decrypt(&self, ctx: &Ctx) -> Self;
-    fn zip_encrypt(ctx: &Ctx, buf: Vec<u8>, seq: u64) -> Self;
+pub trait NeoCrypt {
+    fn decrypt(&self, ctx: &Ctx) -> Self;
+    fn encrypt(ctx: &Ctx, buf: Vec<u8>, seq: u64) -> Self;
 }
 
 impl Serialize for HeaderV1 {
     fn serialize(&self) -> Vec<u8> {
-        let mut bytes = vec![0u8; 2 + 22];
+        let mut bytes = vec![0u8; 2 + 2 + 22];
         
         bytes[0..2]
             .copy_from_slice(&self.version.to_le_bytes());
 
-        bytes[2..24]
+        bytes[2..4]
+            .copy_from_slice(&self.compression_alg.to_le_bytes());
+
+        bytes[4..26]
             .copy_from_slice(self.salt.as_bytes());
 
         bytes
@@ -132,7 +134,7 @@ impl Deserialize for HeaderV1 {
         if b == 0 {
             return (
                 true, 
-                HeaderV1{version: 0, salt: "".into()}
+                HeaderV1{version: 0, compression_alg: 0, salt: "".into()}
             );
         }
         
@@ -140,13 +142,17 @@ impl Deserialize for HeaderV1 {
 
         let version = u16::from_le_bytes(ver_b);
 
+        let mut compression_b = [0u8; 2];
+        r.read_exact(&mut compression_b).unwrap();
 
-        let mut salt_v = vec![0u8; 22];
-        read_until(r, &mut salt_v, 22).unwrap();
+        let compression_alg = u16::from_le_bytes(compression_b);
 
-        let salt = String::from_utf8(salt_v).unwrap();
+        let mut salt_b = [0u8; 22];
+        r.read_exact(&mut salt_b).unwrap();
 
-        (false, HeaderV1 { version: version, salt: salt })
+        let salt = String::from_utf8(salt_b.to_vec()).unwrap();
+
+        (false, HeaderV1 { version: version, compression_alg: compression_alg, salt: salt })
     }
 }
 
@@ -174,13 +180,11 @@ impl Serialize for FrameV1 {
     fn serialize(&self) -> Vec<u8> {
         let mut seq = [0u8; 8];
         let mut encryption_alg= [0u8; 2];
-        let mut compression_alg= [0u8; 2];
         let mut nonce = [0u8; 24];
         let mut buf_len = [0u8; 4];
 
         seq.copy_from_slice(&self.seq.to_le_bytes());
         encryption_alg.copy_from_slice(&self.encryption_alg.to_le_bytes());
-        compression_alg.copy_from_slice(&self.compression_alg.to_le_bytes());
         nonce.copy_from_slice(&self.nonce);
         buf_len.copy_from_slice(&self.buf_len.to_le_bytes());
 
@@ -188,7 +192,6 @@ impl Serialize for FrameV1 {
 
         seq.iter().for_each(|u| {data.push(*u)});
         encryption_alg.iter().for_each(|u| {data.push(*u)});
-        compression_alg.iter().for_each(|u| {data.push(*u)});
         nonce.iter().for_each(|u| {data.push(*u)});
         buf_len.iter().for_each(|u| {data.push(*u)});
 
@@ -211,7 +214,6 @@ impl Deserialize for FrameV1 {
                 FrameV1{
                     seq: 0,
                     encryption_alg: 0,
-                    compression_alg: 0,
                     nonce: *XNonce::from_slice(&[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]),
                     buf_len: 0,
                     buf: vec![],
@@ -229,14 +231,6 @@ impl Deserialize for FrameV1 {
         bst_t_b.copy_from_slice(&bst_t_v);
 
         let encryption_alg = u16::from_le_bytes(bst_t_b);
-
-
-        let mut com_t_b = [0u8; 2];
-        let mut com_t_v = vec![0u8; 2];
-        read_until(r, &mut com_t_v, 2).unwrap();
-        com_t_b.copy_from_slice(&com_t_v);
-
-        let compression_alg = u16::from_le_bytes(com_t_b);
 
 
         let mut nonce_v = vec![0u8; 24];
@@ -263,7 +257,6 @@ impl Deserialize for FrameV1 {
                 seq: seq,
 
                 encryption_alg: encryption_alg,
-                compression_alg: compression_alg,
                 nonce: *nonce,
                 buf_len: buf_len,
 
@@ -273,41 +266,14 @@ impl Deserialize for FrameV1 {
     }
 }
 
-impl ZipCrypt for FrameV1 {
+impl NeoCrypt for FrameV1 {
 
-    fn unzip_decrypt(&self, ctx: &Ctx) -> Self {     
+    fn decrypt(&self, ctx: &Ctx) -> Self {     
 
         let processed = match self.encryption_alg {
             ENCRYPTION_ALG_NULL => panic!("encryption alg not set"),
             ENCRYPTION_ALG_TESTING_ONLY_NONE => {
-
-                // decompress only
-                let mut reader: Box<dyn Read> = match self.compression_alg {
-                    COMPRESSION_ALG_NULL => {
-                        panic!{"compression type not set {}", self.compression_alg}
-                    }
-                    COMPRESSION_ALG_NONE => {
-                        Box::new(
-                            BufReader::new(Cursor::new(&self.buf))
-                        )
-                    }
-                    COMPRESSION_ALG_GZIP => {
-                        Box::new(
-                            GzDecoder::new(self.buf.as_ref())
-                        )
-                    }
-                    COMPRESSION_ALG_BLOSC => {
-                        panic!{"BLOSC not implemented"}
-                    }
-                    _ => {
-                        panic!{"compression type not implemented {}", self.compression_alg}
-                    }
-                };   
-
-                let mut decompressed = vec![];
-                reader.read_to_end(&mut decompressed).unwrap();
-
-                decompressed
+                self.buf.clone()
             }
             ENCRYPTION_ALG_CHACHPOLY20 => {
 
@@ -318,111 +284,51 @@ impl ZipCrypt for FrameV1 {
                     self.buf.as_ref(),
                 ).unwrap();
 
-                // de-compress second
-                let mut reader: Box<dyn Read> = match self.compression_alg {
-                    COMPRESSION_ALG_NULL => {
-                        panic!{"compression type not set {}", self.compression_alg}
-                    }
-                    COMPRESSION_ALG_NONE => {
-                        Box::new(
-                            BufReader::new(Cursor::new(&deciphertext))
-                        )
-                    }
-                    COMPRESSION_ALG_GZIP => {
-                        Box::new(
-                            GzDecoder::new(deciphertext.as_ref())
-                        )
-                    }
-                    COMPRESSION_ALG_BLOSC => {
-                        panic!{"BLOSC not implemented"}
-                    }
-                    _ => {
-                        panic!{"compression type not implemented {}", self.compression_alg}
-                    }
-                };   
-
-                let mut decompressed = vec![];
-                reader.read_to_end(&mut decompressed).unwrap();
-                
-                decompressed
+                deciphertext.to_vec()
             }
-            _ => {panic!("encryption alg not supported {}", self.encryption_alg);}
+            _ => {
+                panic!("encryption alg not supported {}", self.encryption_alg);
+            }
         };
 
         FrameV1{
             seq: self.seq,
-            encryption_alg: self.encryption_alg,
-            compression_alg: self.compression_alg,
-            nonce: self.nonce.clone(),
 
+            encryption_alg: self.encryption_alg,
+            nonce: self.nonce.clone(),
             buf_len: usize_u32(processed.len()),
             buf: processed,
         }
 
     }
 
-    fn zip_encrypt(ctx: &Ctx, buf: Vec<u8>, seq: u64) -> Self {
-
-        let mut reader: Box<dyn Read> = match ctx.compression_alg {
-            COMPRESSION_ALG_NULL => {
-                panic!{"compression type not set {}", ctx.compression_alg}
-            }
-            COMPRESSION_ALG_NONE => {
-                Box::new(
-                    BufReader::new(Cursor::new(&buf))
-                )
-            }
-            COMPRESSION_ALG_GZIP => {
-                Box::new(
-                    GzEncoder::new(Cursor::new(&buf), Compression::default())
-                )
-            }
-            COMPRESSION_ALG_BLOSC => {
-                panic!{"BLOSC not implemented"}
-            }
-            _ => {
-                panic!{"compression type not implemented {}", ctx.compression_alg}
-            }
-        };
-
+    fn encrypt(ctx: &Ctx, buf: Vec<u8>, seq: u64) -> Self {
 
         let frame = match ctx.encryption_alg {
             ENCRYPTION_ALG_NULL => panic!("encryption alg not set"),
             ENCRYPTION_ALG_TESTING_ONLY_NONE => {
-                
-                // compress only
-                let mut compressed = vec![];
-                reader.read_to_end(&mut compressed).unwrap();
-    
                 FrameV1{
                     seq:seq,
     
                     encryption_alg: ctx.encryption_alg,
-                    compression_alg: ctx.compression_alg,
                     nonce: *XNonce::from_slice(&[1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1]),
-                    buf_len: usize_u32(compressed.len()),
-                    buf: compressed,
+                    buf_len: usize_u32(buf.len()),
+                    buf: buf,
                 }
             },
             ENCRYPTION_ALG_CHACHPOLY20 => {
-
-                // compress first
-                let mut compressed = vec![];
-                reader.read_to_end(&mut compressed).unwrap();
-
                 // encrypt second
                 let cipher = crate::hashing::generate_cipher(&ctx.pwd);
                 let nonce = crate::hashing::generate_nonce();
                 let ciphertext = cipher.encrypt(
                     &nonce,
-                    compressed.as_ref(),
+                    buf.as_ref(),
                 ).unwrap();
     
                 FrameV1 {
                     seq:seq,
     
                     encryption_alg: ctx.encryption_alg,
-                    compression_alg: ctx.compression_alg,
                     nonce: nonce,
                     buf_len: usize_u32(ciphertext.len()),
                     buf: ciphertext,
@@ -893,6 +799,7 @@ mod tests {
 
         let h = HeaderV1{
             version: 1,
+            compression_alg: COMPRESSION_ALG_NONE,
             salt: String::from(ctx.pwd.salt().unwrap().as_str()), // 22 byte string
         };
 
@@ -904,6 +811,7 @@ mod tests {
 
         assert_eq!(is_empty, false);
         assert_eq!(h.version, h_de.version);
+        assert_eq!(h.compression_alg, h_de.compression_alg);
         assert_eq!(h.salt, h_de.salt);
     }
 
@@ -943,6 +851,7 @@ mod tests {
 
         let h1 = HeaderV1{
             version: 1,
+            compression_alg: COMPRESSION_ALG_NONE,
             salt: String::from(ctx.pwd.salt().unwrap().as_str()), // 22 byte string
         };
 
@@ -1002,7 +911,6 @@ mod tests {
             seq: 1,
 
             encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
-            compression_alg: COMPRESSION_ALG_GZIP,
             nonce: *XNonce::from_slice(&[1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1]),
             buf_len: usize_u32(size),
             buf: vec![1u8; size],

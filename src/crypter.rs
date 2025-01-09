@@ -33,7 +33,7 @@ fn park_sender<T>(sender: Sender<T>) { while ! sender.is_empty() {} }
 fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<(Seq, Vec<u8>)>, sender: Sender<T>) -> JoinHandle<()>
     where
         T: Send + 'static,
-        T: ZipCrypt,
+        T: NeoCrypt,
         T: Serialize,
         T: Deserialize,
     {
@@ -47,7 +47,7 @@ fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<(Seq, Vec<u8>)>, sender: Sende
             .par_bridge()
             .for_each(|(seq, buf)| {
 
-            let frame = T::zip_encrypt(ctx, buf, seq);
+            let frame = T::encrypt(ctx, buf, seq);
 
             match sender.send(frame) {
                 Ok(()) => {},
@@ -60,7 +60,7 @@ fn spawn_encrypt<T>(ctx: &Ctx, receiver: Receiver<(Seq, Vec<u8>)>, sender: Sende
 fn spawn_decrypt<T>(ctx: &Ctx, receiver: Receiver<T>, sender: Sender<T>) -> JoinHandle<()>
     where
         T: Send + 'static,
-        T: ZipCrypt,
+        T: NeoCrypt,
         T: Serialize,
         T: Deserialize,
         T: Sequenced,
@@ -75,7 +75,7 @@ fn spawn_decrypt<T>(ctx: &Ctx, receiver: Receiver<T>, sender: Sender<T>) -> Join
         .par_bridge()
         .for_each(|frame| {
 
-        let f = frame.unzip_decrypt(&ctx);
+        let f = frame.decrypt(&ctx);
         match sender.send(f) {
             Ok(()) => {},
             Err(e) => {panic!("error: sender error during decrypt: {:?}", e);}
@@ -259,6 +259,7 @@ mod tests {
     use crate::common::*;
 
     use super::*;
+    use core::panic;
     use std::{fs::OpenOptions, io::Write, sync::{Arc, Mutex}};
     use crossbeam_channel::{bounded, unbounded};
 
@@ -373,6 +374,7 @@ mod tests {
                 // write header
                 header = HeaderV1{
                     version: VERSION_1,
+                    compression_alg: COMPRESSION_ALG_GZIP,
                     salt: String::from(ctx.pwd.salt().unwrap().as_str()),
                 };
                 bw.write_all(&header.serialize()).unwrap();
@@ -413,6 +415,7 @@ mod tests {
                 let (is_empty, header_de) = HeaderV1::deserialize(&mut r);
                 assert_eq!(is_empty, false);
                 assert_eq!(header.version, header_de.version);
+                assert_eq!(header.compression_alg, header_de.compression_alg);
                 assert_eq!(header.salt, header_de.salt);
                 
                 // unpack tar and read frames
