@@ -24,6 +24,8 @@ use chacha20poly1305::XNonce;
 use chrono::DateTime;
 use chrono::Utc;
 
+use crate::context::Ctx;
+
 pub const KB: usize = 1000;
 pub const MB: usize = 1000 * KB;
 pub const GB: usize = 1000 * MB;
@@ -46,32 +48,12 @@ pub const COMPRESSION_ALG_GZIP: CompressionAlg = 2;
 
 type IsEmpty = bool;
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum OSType {
-    Null = 0,
-    Linux = 1,
-    MacOS = 2,
-    Unsupported = 3,
-}
-
-#[derive(Clone)]
-pub struct Ctx {
-    pub os: OSType,
-    pub storage: StorageDirs,
-
-    pub pwd: PasswordHashString,
-    pub name: String,
-
-    pub close_all: bool,
-    pub compression_alg: u16,
-    pub encryption_alg: u16,
-}
-
 #[derive(Clone)]
 pub struct StorageDirs {
-    pub home: PathBuf,
+    pub project: PathBuf,
     pub mount_from: PathBuf,
     pub mount_to: PathBuf,
+    pub tmp: PathBuf,
 }
 
 // field order is ser & deser order
@@ -346,13 +328,13 @@ impl NeoCrypt for FrameV1 {
 }
 
 pub fn bytes_fmt(n: usize) -> String {
-    if n > GB {
+    if (n > GB) {
         return format!("{}GB", n / GB);
     }
-    if n > MB {
+    if (n > MB) {
         return format!("{}MB", n / MB);
     }
-    if n > KB {
+    if (n > KB) {
         return format!("{}KB", n / KB);
     }
     return format!("{}B", n);
@@ -616,131 +598,11 @@ impl Drop for PathCleanup {
     }
 }
 
-pub struct TestInit {
-    ctx: Ctx,
-    uid: String,
-    tmp: PathBuf,
-    tmp_cleanup: PathCleanup,
-    storage_cleanup: Option<PathCleanup>,
-}
-
-impl TestInit {
-    pub fn new() -> Self {
-        let now: DateTime<Utc> = Utc::now();
-        let mut uid: String = now.to_rfc3339();
-        uid.push_str("_");
-        uid.push_str(&new_uid(8));
-
-        let tmp = PathBuf::new().join("tmp").join(uid.clone());
-
-        let tmp_cleanup = PathCleanup::new(tmp.clone());
-
-        create_dir_all(&tmp).unwrap();
-
-        let ctx = Self::new_ctx(&tmp);
-
-        TestInit {
-            ctx: ctx,
-            uid: uid,
-            tmp: tmp,
-            tmp_cleanup: tmp_cleanup,
-            storage_cleanup: None,
-        }
-    }
-
-    pub fn with_storage(mut self) -> Self {
-        // initializes storage directories
-        create_dir_all(&self.ctx.storage.home).unwrap();
-        create_dir_all(&self.ctx.storage.mount_from).unwrap();
-        create_dir_all(&self.ctx.storage.mount_to).unwrap();
-
-        return self;
-    }
-
-    pub fn with_logger(self) -> Self {
-        init_logger().unwrap();
-        self
-    }
-
-    pub fn get_ctx(&self) -> Ctx {
-        return self.ctx.clone();
-    }
-
-    pub fn get_channel_size(&self) -> usize {
-        return num_cpus::get() * 2;
-    }
-
-    pub fn get_home_dir(&self) -> PathBuf {
-        home_dir().unwrap()
-    }
-
-    // returns directory of project
-    pub fn get_cargo_dir(&self) -> PathBuf {
-        self.get_home_dir()
-            .join("Dropbox")
-            .join("code2")
-            .join("locker")
-    }
-
-    // returns directory of project
-    pub fn get_documents(&self) -> PathBuf {
-        self.get_cargo_dir().join("dummy_data").join("documents")
-    }
-
-    // returns a a path such as tmp/<8_byte_uid>
-    pub fn new_tmp_path(&self) -> PathBuf {
-        let tmp_path = PathBuf::from(self.tmp.clone()).join(new_uid(8));
-        debug!("using tmp path {:?}", &tmp_path);
-        return tmp_path;
-    }
-
-    fn new_ctx(root: &PathBuf) -> Ctx {
-        const PWD: &str = "V7Pvxzhhw9gLWV3k";
-        const PWD_RAW: &str = "$scrypt$ln=17,r=8,p=1$AeWF6c7Pdso2YZy4PfMs+g$YyBx8qB2Hv3pOJSKbR/vRzGRL8i/ZIeuCTtt/GuW5Hto2mHs8vz0brNyHzmqXvcfk03ZymcMgKtVkUk9tpEx6w";
-
-        let home = root.join(".bastion_test");
-        let mount_from = home.join("mount_from");
-        let mount_to = home.join("mount_to");
-
-        let pwd_hash_str = password_hash::PasswordHashString::from_str(PWD_RAW).unwrap();
-        debug!("SALT::{}", pwd_hash_str.salt().unwrap().as_str());
-
-        let os = match std::env::consts::OS {
-            "linux" => OSType::Linux,
-            "macos" => OSType::MacOS,
-            _ => OSType::Unsupported,
-        };
-
-        if os == OSType::Unsupported {
-            panic!("error: unsupported os {}", std::env::consts::OS);
-        }
-
-        Ctx {
-            os: os,
-            storage: StorageDirs {
-                home: home,
-                mount_from: mount_from,
-                mount_to: mount_to,
-            },
-
-            pwd: pwd_hash_str,
-            name: new_uid(8),
-
-            close_all: false,
-
-            // compression_alg: COMPRESSION_ALG_NONE,
-            compression_alg: COMPRESSION_ALG_GZIP,
-            // encryption_alg: ENCRYPTION_ALG_TESTING_ONLY_NONE,
-            encryption_alg: ENCRYPTION_ALG_CHACHPOLY20,
-        }
-    }
-}
-
 static IS_LOGGER_INIT: Mutex<bool> = std::sync::Mutex::new(false);
-fn init_logger() -> Result<(), Box<dyn std::error::Error>> {
+pub fn init_logger() -> Result<(), Box<dyn std::error::Error>> {
     let mut is_logger_init = IS_LOGGER_INIT.lock().unwrap();
 
-    if !*is_logger_init {
+    if (!*is_logger_init) {
         *is_logger_init = true;
         // Configure logger at runtime
         fern::Dispatch::new()
@@ -759,8 +621,8 @@ fn init_logger() -> Result<(), Box<dyn std::error::Error>> {
             // Output to stdout, files, and other Dispatch configurations
             .chain(std::io::stdout())
             .chain(fern::log_file("output.log")?)
-            // Apply globally
             .apply()
+            // Apply globally
             .unwrap();
     }
 
@@ -775,16 +637,17 @@ mod tests {
         iter::zip,
         path::PathBuf,
     };
-
-    use crate::new_uid;
+    use crate::context::Init;
 
     use super::*;
 
     #[test]
     fn test_serialize_deserialize_header_v1() {
-        let t = TestInit::new().with_storage().with_logger();
-
-        let ctx = &t.get_ctx();
+        let ctx = Ctx::new_test();
+        
+        Init::new(&ctx)
+            .init_logger();
+        
 
         let h = HeaderV1 {
             version: 1,
@@ -806,7 +669,10 @@ mod tests {
 
     #[test]
     fn test_serialize_deserialize_frame_v1() {
-        let t = TestInit::new().with_storage().with_logger();
+        let ctx = Ctx::new_test();
+        
+        Init::new(&ctx)
+            .init_logger();
 
         let f = new_frame(256);
 
@@ -829,9 +695,10 @@ mod tests {
 
     #[test]
     fn test_serialize_deserialize_header_frames_v1() {
-        let t = TestInit::new().with_logger();
-
-        let ctx = &t.get_ctx();
+        let ctx = Ctx::new_test();
+        
+        Init::new(&ctx)
+            .init_logger();
 
         let mut datas = vec![];
 

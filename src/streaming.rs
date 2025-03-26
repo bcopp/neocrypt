@@ -137,10 +137,15 @@ mod tests {
 
     use super::*;
     use crate::common::*;
+    use crate::context::{Init, Ctx};
 
     #[test]
     fn test_streambuf_reader_writer() {
-        let t = &TestInit::new().with_storage().with_logger();
+        let ctx = Ctx::new_test();
+
+        let t = &Init::new(&ctx)
+            .init_storage()
+            .init_logger();
 
         let datas = [
             rand_vec(0..1),

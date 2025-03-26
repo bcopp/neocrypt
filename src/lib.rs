@@ -6,55 +6,106 @@ mod common;
 mod crypter;
 mod hashing;
 mod streaming;
+mod context;
 
 use common::*;
+use context::{Init, Ctx};
 use core::panic;
+use std::error::Error;
 use std::fs::{create_dir, read_dir, remove_dir_all, DirEntry};
 use std::io;
 use std::path::PathBuf;
 use std::process::exit;
 use sys_mount::FilesystemType;
 use sys_mount::{Mount, SupportedFilesystems};
+use log::error;
+
+struct LS{
+    srcs: Vec<PathBuf>,
+    srcs_errors: Vec<io::Error>,
+    trgs: Vec<PathBuf>,
+    trgs_errors: Vec<io::Error>,
+    dangling_srcs: Vec<PathBuf>,
+}
+
 
 // lists all directories that exist in mount_from with an associated mount_to
-pub fn ls(ctx: &Ctx) -> Result<Vec<PathBuf>, io::Error> {
+pub fn ls(ctx: &Ctx) -> Result<LS, Box<dyn Error>> {
+    
+    // search for all directories in mount_from
     let srcs_read = std::fs::read_dir(&ctx.storage.mount_from)?;
-    let srcs: Vec<DirEntry> = srcs_read.map(|s| s.unwrap()).collect();
+    let mut srcs_errors = vec![];
+    let mut srcs: Vec<PathBuf> = vec![];
+    
+    for src in srcs_read {
+        match src {
+            Ok(s) => {
+                srcs.push(s.path());
+            }
+            Err(e) => {
+                srcs_errors.push(e);
+            }
+        }
+    }
 
+    // search for all directories in mount_to
     let trgs_read = std::fs::read_dir(&ctx.storage.mount_to)?;
-    let trgs: Vec<DirEntry> = trgs_read.map(|t| t.unwrap()).collect();
+    let mut trgs_errors = vec![];
+    let mut trgs: Vec<PathBuf> = vec![];
 
-    println!("srcs {:?}", srcs);
-    println!("trgs {:?}", trgs);
+    for trg in trgs_read {
+        match trg {
+            Ok(t) => {
+                trgs.push(t.path());
+            }
+            Err(e) => {
+                trgs_errors.push(e);
+            }
+        }
+    }
 
-    /* might have improperly ejected */
+    // for each item in srcs_errors print the error
+    for e in &srcs_errors {
+        error!("Error reading source directory: {}", e);
+    }
+
+    // for each item in trgs_errors print the error
+    for e in &trgs_errors {
+        error!("Error reading target directory: {}", e);
+    }
+
+    // find all directories in mount_from that don't have a corresponding directory in mount_to
     let mut dangling_srcs = vec![];
     for s in &srcs {
         if trgs.iter().any(|t| s.file_name() == t.file_name()) {
         } else {
-            dangling_srcs.push(s);
+            dangling_srcs.push(s.clone());
         }
     }
 
-    println!("cleanup srcs {:?}", dangling_srcs);
-
-    for s in dangling_srcs {
-        std::fs::remove_dir_all(s.path()).unwrap();
+    // remove these dangling sources
+    // this can happen when a user ejects improperly
+    for s in &dangling_srcs {
+        std::fs::remove_dir_all(s.as_path())?;
     }
 
-    let paths: Vec<PathBuf> = trgs.iter().map(|t| t.path()).collect();
-
-    println!("paths paths {:?}", paths);
-
-    Ok(paths)
+    Ok(LS {
+        srcs: srcs,
+        trgs: trgs,
+        srcs_errors: srcs_errors,
+        trgs_errors: trgs_errors,
+        dangling_srcs: dangling_srcs,
+    })
 }
 
 // creates a new directory by name and mounts it
 pub fn new(ctx: &Ctx) -> Result<Mount, io::Error> {
+
+    // initialize directories
     let src = &ctx.storage.mount_from.join(&ctx.name);
     let trg = &ctx.storage.mount_to.join(&ctx.name);
-    create_dir(src).unwrap();
-    create_dir(trg).unwrap();
+    create_dir(src)?;
+    create_dir(trg)?;
 
     Ok(mount(src, trg)?)
 }
@@ -62,20 +113,42 @@ pub fn new(ctx: &Ctx) -> Result<Mount, io::Error> {
 // decrypts a file to mount_from and mounts in mount_to
 pub fn open(ctx: &Ctx) {}
 
-// encrypts a file from mount_from, unmounts and cleansup the directory
+// encrypts a file from mount_from, unmounts and cleans up the directory
 pub fn close(ctx: &Ctx) {
-    let entries: Vec<_> = read_dir(&ctx.storage.mount_to).unwrap().collect();
+    let _ls = ls(ctx);
 
-    if ctx.close_all {
-        panic!("unimplemented")
-    } else {
-        if entries.len() != 0 {
-        } else {
+    match _ls {
+        Ok(_ls) => {
+            if _ls.srcs.len() != 0 {
+
+            } else {
+
+            }
+    
+            let to_unmount = &ctx.storage.mount_to.join(&ctx.name);
+            if let Err(e) = unmount(to_unmount) {
+                eprintln!("Failed to unmount: {}", e);
+                return;
+            }
+            if let Err(e) = remove_dir_all(to_unmount) {
+                eprintln!("Failed to remove directory: {}", e);
+                return;
+            }
         }
+        Err(e) => {
+            let to_unmount = &ctx.storage.mount_to.join(&ctx.name);
+            if let Err(e) = unmount(to_unmount) {
+                eprintln!("Failed to unmount: {}", e);
+                return;
+            }
+            if let Err(e) = remove_dir_all(to_unmount) {
+                eprintln!("Failed to remove directory: {}", e);
+                return;
+            }
 
-        let to_unmount = &ctx.storage.mount_to.join(&ctx.name);
-        unmount(to_unmount).unwrap();
-        remove_dir_all(to_unmount).unwrap();
+            eprintln!("Failed to list directories: {}", e);
+            return;
+        }
     }
 }
 
@@ -131,17 +204,19 @@ mod tests {
     #[test]
     #[ignore = "test manually"]
     fn test_ls_mount_unmount() {
-        let t = &TestInit::new().with_storage().with_logger();
+        let ctx = Ctx::new_test();
 
-        let ctx: Ctx = t.get_ctx();
+        Init::new(&ctx)
+            .init_storage()
+            .init_logger();
 
         let mounted = ls(&ctx).unwrap();
-        assert_eq!(mounted.len(), 0);
+        assert_eq!(mounted.trgs.len(), 0);
 
         new(&ctx).unwrap();
-        assert_eq!(ls(&ctx).unwrap().len(), 1);
+        assert_eq!(ls(&ctx).unwrap().srcs.len(), 1);
 
         close(&ctx);
-        assert_eq!(ls(&ctx).unwrap().len(), 0);
+        assert_eq!(ls(&ctx).unwrap().srcs.len(), 0);
     }
 }

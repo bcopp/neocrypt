@@ -2,6 +2,7 @@
 */
 
 use crate::common::*;
+use crate::context::Ctx;
 use crossbeam_channel::Receiver;
 use crossbeam_channel::Sender;
 use flate2::read::GzDecoder;
@@ -246,7 +247,7 @@ where
 #[cfg(test)]
 mod tests {
 
-    use crate::common::*;
+    use crate::{common::*, context::Init};
 
     use super::*;
     use core::panic;
@@ -266,13 +267,17 @@ mod tests {
     #[ignore = "run serially"]
     #[test]
     fn test_packer_unpacker() {
-        let t = &TestInit::new().with_storage().with_logger();
+        let ctx = Ctx::new_test();
+
+        Init::new(&ctx)
+            .init_storage()
+            .init_logger();
 
         let src = std::env::current_dir()
             .unwrap()
             .join("dummy_data")
             .join("documents");
-        let trg = t.new_tmp_path();
+        let trg = ctx.new_tmp_path();
 
         let (s, r) = unbounded();
 
@@ -292,15 +297,18 @@ mod tests {
     // Packer -> Compressor -> Decompressor -> Unpacker
     #[test]
     fn test_compressor() {
-        let t = TestInit::new().with_storage().with_logger();
+        let ctx = Ctx::new_test();
 
-        let ctx = &t.get_ctx();
-        let size = t.get_channel_size();
+        Init::new(&ctx)
+            .init_storage()
+            .init_logger();
 
-        let folders = [t.get_documents()];
+        let size = ctx.get_channel_size();
+
+        let folders = [ctx.get_documents()];
 
         for folder in folders {
-            let decompressed: PathBuf = t.new_tmp_path();
+            let decompressed: PathBuf = ctx.new_tmp_path();
 
             let (s_packer, r_packer) = bounded(size);
             let (s_compressor, r_compressor) = bounded(size);
@@ -331,17 +339,21 @@ mod tests {
     */
     #[test]
     fn test_encrypt_decrypt() {
-        let t = TestInit::new().with_storage().with_logger();
+        let ctx = Ctx::new_test();
 
-        let ctx = &t.get_ctx();
-        let size = t.get_channel_size();
+        Init::new(&ctx)
+            .init_storage()
+            .init_logger();
 
-        let folders = [t.get_documents()];
+
+        let size = ctx.get_channel_size();
+
+        let folders = [ctx.get_documents()];
 
         for folder in folders {
             debug!("folder {}", folder.to_str().unwrap());
-            let encrypted: PathBuf = t.new_tmp_path();
-            let decrypted: PathBuf = t.new_tmp_path();
+            let encrypted: PathBuf = ctx.new_tmp_path();
+            let decrypted: PathBuf = ctx.new_tmp_path();
 
             let header: HeaderV1;
 
@@ -372,7 +384,7 @@ mod tests {
 
                 let t1 = spawn_packer(&folder, StreamBufWriter::new(s_packer));
                 let t2 = spawn_with_seq(r_packer, s_with_seq);
-                let t3 = spawn_encrypt::<FrameV1>(ctx, r_with_seq, s_encrypter);
+                let t3 = spawn_encrypt::<FrameV1>(&ctx, r_with_seq, s_encrypter);
                 let t4 = spawn_order_by_seq(r_encrypter, s_order_by);
                 let t5 = spawn_to_serialize(r_order_by, s_to_bytes);
                 let t6 = spawn_writer(bw, r_to_bytes);
@@ -420,10 +432,13 @@ mod tests {
 
     #[test]
     fn test_msgs_encrypt_decrypt() {
-        let t = TestInit::new().with_storage().with_logger();
+        let ctx = Ctx::new_test();
 
-        let ctx = &t.get_ctx();
-        let size = t.get_channel_size();
+        Init::new(&ctx)
+            .init_storage()
+            .init_logger();
+
+        let size = ctx.get_channel_size();
 
         let datas = [
             rand_vec(0..1),
@@ -478,7 +493,7 @@ mod tests {
             });
 
             debug!("encrypt decrypt: spawn encrypter");
-            let encrypter_t = spawn_encrypt::<FrameV1>(ctx, r_reader, s_writer);
+            let encrypter_t = spawn_encrypt::<FrameV1>(&ctx, r_reader, s_writer);
 
             let writer_t = spawn(move || {
                 debug!("encrypt decrypt: spawn writer out");
@@ -512,7 +527,7 @@ mod tests {
                 debug!("encrypt decrypt: channel closed: reader")
             });
 
-            let decrypter_t = spawn_decrypt::<FrameV1>(ctx, r_reader, s_order_by_seq);
+            let decrypter_t = spawn_decrypt::<FrameV1>(&ctx, r_reader, s_order_by_seq);
             let order_by_t = spawn_order_by_seq::<FrameV1>(r_order_by_seq, s_writer);
 
             let writer_t = spawn(move || {
